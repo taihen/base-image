@@ -35,7 +35,7 @@ You can use this image as a secure and minimal base for your applications.
 ### Example: Go (CGO-enabled)
 
 ```dockerfile
-FROM golang:1.24 as builder
+FROM golang:1.23 as builder
 WORKDIR /src
 COPY main.go .
 ARG TARGETARCH
@@ -79,6 +79,21 @@ To build the image locally, you need Docker with BuildKit enabled.
     docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/taihen/base-image:latest --push .
     ```
 
+3.  **Run the test suite:**
+    ```sh
+    # Test the latest published image
+    ./test/test-image.sh
+    
+    # Test a specific image
+    ./test/test-image.sh ghcr.io/taihen/base-image:latest
+    ```
+
+    The test script will:
+    - Build and run a Go hello world application using the base image
+    - Verify the non-root user configuration
+    - Run a security scan with Trivy
+    - Report any issues found
+
 ## Automation
 
 The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process. It is triggered on:
@@ -112,3 +127,29 @@ This repository includes an intelligent automatic release system that creates Gi
 ### Release Naming
 
 Releases are automatically tagged with a date-based version format: `vYYYY.MM.DD` (e.g., `v2024.01.15`). If multiple releases occur on the same day, a counter is appended (e.g., `v2024.01.15.1`).
+
+## Automated Testing
+
+Before creating a release, the workflow runs comprehensive tests to ensure the base image works correctly:
+
+### Test Suite
+
+1. **Go Application Test**: Builds and runs a hello world Go application on the base image
+   - Verifies CGO compatibility (glibc linkage)
+   - Tests both `linux/amd64` and `linux/arm64` architectures
+   - Confirms non-root user execution (UID/GID 65532)
+   - Validates environment variable handling
+
+2. **Multi-Platform Build Test**: Ensures the image works correctly in multi-architecture builds
+
+3. **Security Scan**: Runs Trivy to scan for vulnerabilities and reports any critical or high-severity issues
+
+### Test Failure Handling
+
+If any test fails:
+- The workflow stops immediately
+- No release is created
+- The build artifacts remain available for debugging
+- The next scheduled run will retry if the issues are resolved
+
+This ensures that only fully functional and tested images are released.
