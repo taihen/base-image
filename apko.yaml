@@ -6,6 +6,9 @@ contents:
   repositories:
     # Use Chainguard's public Wolfi package repository
     - https://packages.wolfi.dev/os
+  keyring:
+    # The public key to verify the Wolfi repository signatures
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
   packages:
     # A minimal set of packages for a glibc-based "distroless" image
     - wolfi-baselayout
