@@ -15,7 +15,7 @@ jobs:
       packages: write
       id-token: write # Required for keyless signing with Cosign
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.extract-digest.outputs.digest }}
       has-changes: ${{ steps.compare.outputs.has-changes }}
     steps:
       - name: Checkout repository
@@ -66,14 +66,22 @@ jobs:
             # Sign the image digest using Cosign keyless signing.
             cosign sign --yes "$digest"
 
-            # Save the digest for output
-            echo "digest=$digest" >> $GITHUB_OUTPUT
+            # Save the digest to a file that can be read outside the container
+            echo "$digest" > digest.txt
+
+      - name: Extract digest
+        id: extract-digest
+        run: |
+          # Read the digest from the file created in the container
+          DIGEST=$(cat digest.txt)
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "Extracted digest: $DIGEST"
 
       - name: Compare digests
         id: compare
         run: |
           PREVIOUS="${{ steps.previous.outputs.digest }}"
-          CURRENT="${{ steps.build.outputs.digest }}"
+          CURRENT="${{ steps.extract-digest.outputs.digest }}"
 
           echo "Previous digest: $PREVIOUS"
           echo "Current digest: $CURRENT"
@@ -92,7 +100,9 @@ jobs:
       - name: Save current digest
         run: |
           mkdir -p current-digest
-          echo "${{ steps.build.outputs.digest }}" > current-digest/digest.txt
+          echo "${{ steps.extract-digest.outputs.digest }}" > current-digest/digest.txt
+          # Clean up temporary file
+          rm -f digest.txt
 
       - name: Upload current digest artifact
         uses: actions/upload-artifact@v4
