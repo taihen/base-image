@@ -11,7 +11,7 @@ contents:
     - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
   packages:
     # A minimal set of packages for a glibc-based "distroless" image
-    - wolfi-baselayout
+    - wolfi-base
     - glibc
     - ca-certificates
 
