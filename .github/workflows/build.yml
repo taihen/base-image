@@ -1,0 +1,49 @@
+name: Build & Publish Multi-Arch Distroless glibc Base
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Run daily at 5 AM UTC to pick up the latest package updates from Wolfi
+    - cron: "0 5 * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # Required for keyless signing with Cosign
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build, Publish, and Sign with wolfi-act
+        uses: wolfi-dev/wolfi-act@main
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+          OCI_HOST: ghcr.io
+          OCI_REPO: ${{ github.repository }}
+        with:
+          packages: apko,cosign
+          command: |
+            set -e
+
+            # Log in to the GitHub Container Registry
+            echo "${{ secrets.GITHUB_TOKEN }}" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
+
+            # Publish the multi-arch image using apko, which also generates an SBOM.
+            # The digest is captured for signing.
+            digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
+              --architecture=amd64,arm64 \
+              --sbom-path=sbom.spdx.json \
+              --pull-policy=no-cache)
+
+            # Sign the image digest using Cosign keyless signing.
+            cosign sign --yes "$digest"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json

@@ -1,0 +1,33 @@
+# This file defines a minimal, multi-arch glibc base image using apko.
+# It is inspired by the principles of Google Distroless and Chainguard Images.
+# For more information on apko, see: https://github.com/chainguard-dev/apko
+
+contents:
+  repositories:
+    # Use Chainguard's public Wolfi package repository
+    - https://packages.wolfi.dev/os
+  packages:
+    # A minimal set of packages for a glibc-based "distroless" image
+    - wolfi-baselayout
+    - glibc
+    - ca-certificates
+
+# Set up a non-root user and group, and run as that user.
+# This is a critical security best practice.
+accounts:
+  users:
+    - username: nonroot
+      uid: 65532
+  groups:
+    - groupname: nonroot
+      gid: 65532
+  run-as: 65532
+
+# Define the supported architectures. apko will build a multi-arch manifest.
+archs:
+  - x86_64
+  - aarch64
+
+# A distroless image has no shell or entrypoint.
+# The application using this base image will provide its own entrypoint.
+entrypoint: {}
