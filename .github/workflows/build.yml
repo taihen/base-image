@@ -32,10 +32,13 @@ jobs:
             # Log in to the GitHub Container Registry
             echo "${{ secrets.GITHUB_TOKEN }}" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
 
+            # Create a directory for the SBOMs
+            mkdir -p sbom-output
+
             # Publish the multi-arch image using apko, which also generates an SBOM.
             # The digest is captured for signing.
             digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
-              --sbom-path=sbom.spdx.json)
+              --sbom-path=sbom-output)
 
             # Sign the image digest using Cosign keyless signing.
             cosign sign --yes "$digest"
@@ -44,4 +47,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sbom
-          path: sbom.spdx.json
+          path: sbom-output/
