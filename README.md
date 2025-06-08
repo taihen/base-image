@@ -85,3 +85,30 @@ The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow hand
 
 -   A `push` to the `main` branch.
 -   A daily schedule (`cron: "0 5 * * *"`) to ensure the image is kept up-to-date with upstream packages.
+
+## Automatic Release System
+
+This repository includes an intelligent automatic release system that creates GitHub releases only when there are actual changes in the built image. This prevents unnecessary releases when the daily cron job runs but no packages have been updated.
+
+### How it Works
+
+1. **Digest Comparison**: After each build, the workflow captures the image digest (a unique identifier based on the image's content).
+2. **Change Detection**: The digest is compared with the previous build's digest stored as a GitHub artifact.
+3. **Conditional Release**: A new GitHub release is created only if:
+   - No previous digest exists (first run)
+   - The current digest differs from the previous one (indicating changes)
+4. **Release Contents**: Each release includes:
+   - The image digest for verification
+   - The SBOM (Software Bill of Materials) as an attachment
+   - Instructions for verifying the image signature
+
+### Benefits
+
+- **Meaningful Releases**: Only creates releases when there are actual changes
+- **Audit Trail**: Each release documents what changed and when
+- **Resource Efficiency**: Avoids cluttering the releases page with identical builds
+- **Supply Chain Security**: Every release includes verification instructions and SBOM
+
+### Release Naming
+
+Releases are automatically tagged with a date-based version format: `vYYYY.MM.DD` (e.g., `v2024.01.15`). If multiple releases occur on the same day, a counter is appended (e.g., `v2024.01.15.1`).

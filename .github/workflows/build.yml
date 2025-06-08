@@ -14,11 +14,34 @@ jobs:
       contents: read
       packages: write
       id-token: write # Required for keyless signing with Cosign
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      has-changes: ${{ steps.compare.outputs.has-changes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Download previous digest artifact
+        uses: actions/download-artifact@v4
+        id: download
+        continue-on-error: true
+        with:
+          name: previous-digest
+          path: previous-digest
+
+      - name: Read previous digest
+        id: previous
+        run: |
+          if [ -f previous-digest/digest.txt ]; then
+            echo "digest=$(cat previous-digest/digest.txt)" >> $GITHUB_OUTPUT
+            echo "Previous digest found: $(cat previous-digest/digest.txt)"
+          else
+            echo "No previous digest found"
+            echo "digest=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build, Publish, and Sign with wolfi-act
+        id: build
         uses: wolfi-dev/wolfi-act@main
         env:
           COSIGN_EXPERIMENTAL: "1"
@@ -43,8 +66,110 @@ jobs:
             # Sign the image digest using Cosign keyless signing.
             cosign sign --yes "$digest"
 
+            # Save the digest for output
+            echo "digest=$digest" >> $GITHUB_OUTPUT
+
+      - name: Compare digests
+        id: compare
+        run: |
+          PREVIOUS="${{ steps.previous.outputs.digest }}"
+          CURRENT="${{ steps.build.outputs.digest }}"
+
+          echo "Previous digest: $PREVIOUS"
+          echo "Current digest: $CURRENT"
+
+          if [ -z "$PREVIOUS" ]; then
+            echo "No previous digest, marking as changed"
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+          elif [ "$PREVIOUS" != "$CURRENT" ]; then
+            echo "Digests differ, marking as changed"
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "Digests are identical, no changes"
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Save current digest
+        run: |
+          mkdir -p current-digest
+          echo "${{ steps.build.outputs.digest }}" > current-digest/digest.txt
+
+      - name: Upload current digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: previous-digest
+          path: current-digest/digest.txt
+          retention-days: 7
+          overwrite: true
+
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: sbom-output/
+
+  release:
+    needs: build
+    if: needs.build.outputs.has-changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate release tag
+        id: tag
+        run: |
+          # Generate a date-based tag for the release
+          TAG="v$(date +'%Y.%m.%d')"
+          COUNTER=0
+
+          # Check if tag already exists and increment counter if needed
+          while git ls-remote --tags origin | grep -q "refs/tags/${TAG}"; do
+            COUNTER=$((COUNTER + 1))
+            TAG="v$(date +'%Y.%m.%d').${COUNTER}"
+          done
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Generated tag: $TAG"
+
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom-output
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          body: |
+            ## 🚀 Automated Release
+
+            This release was automatically generated due to changes detected in the container image build.
+
+            ### 📦 Container Image
+            - **Image**: `ghcr.io/${{ github.repository }}:latest`
+            - **Digest**: `${{ needs.build.outputs.digest }}`
+
+            ### 📋 What's Changed
+            This release includes the latest security updates and package changes from the Wolfi base image.
+
+            ### 🔐 Verification
+            You can verify the image signature using:
+            ```bash
+            cosign verify ${{ needs.build.outputs.digest }} \
+              --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+              --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+            ```
+
+            ### 📄 SBOM
+            The Software Bill of Materials (SBOM) is attached to this release.
+          files: |
+            sbom-output/*
+          generate_release_notes: false
+          draft: false
+          prerelease: false
