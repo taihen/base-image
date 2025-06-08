@@ -35,7 +35,6 @@ jobs:
             # Publish the multi-arch image using apko, which also generates an SBOM.
             # The digest is captured for signing.
             digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
-              --architecture=amd64,arm64 \
               --sbom-path=sbom.spdx.json \
               --pull-policy=no-cache)
 
