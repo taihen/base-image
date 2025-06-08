@@ -35,8 +35,7 @@ jobs:
             # Publish the multi-arch image using apko, which also generates an SBOM.
             # The digest is captured for signing.
             digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
-              --sbom-path=sbom.spdx.json \
-              --pull-policy=no-cache)
+              --sbom-path=sbom.spdx.json)
 
             # Sign the image digest using Cosign keyless signing.
             cosign sign --yes "$digest"
