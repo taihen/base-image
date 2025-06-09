@@ -21,13 +21,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get previous digest from last successful run
+      - name: Get previous digest and SBOM from last successful run
         id: previous
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Try to get the digest from the most recent successful workflow run
-          echo "Fetching previous digest from last successful workflow run..."
+          # Try to get the digest and SBOM from the most recent successful workflow run
+          echo "Fetching previous digest and SBOM from last successful workflow run..."
 
           # Get the most recent successful workflow run
           LAST_RUN=$(gh api \
@@ -40,29 +40,31 @@ jobs:
             echo "Found last successful run: $LAST_RUN"
             
             # List artifacts from that run
-            ARTIFACT_ID=$(gh api \
+            ARTIFACTS=$(gh api \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts" \
-              --jq '.artifacts[] | select(.name == "previous-digest") | .id' || echo "")
+              "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts")
             
-            if [ -n "$ARTIFACT_ID" ]; then
-              echo "Found previous digest artifact: $ARTIFACT_ID"
+            # Get digest artifact
+            DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-digest") | .id' || echo "")
+            
+            if [ -n "$DIGEST_ARTIFACT_ID" ]; then
+              echo "Found previous digest artifact: $DIGEST_ARTIFACT_ID"
               
-              # Download the artifact
+              # Download the digest artifact
               gh api \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID/zip" \
-                > artifact.zip
+                "/repos/${{ github.repository }}/actions/artifacts/$DIGEST_ARTIFACT_ID/zip" \
+                > digest-artifact.zip
               
               # Extract and read the digest
-              unzip -q artifact.zip
+              unzip -q digest-artifact.zip
               if [ -f digest.txt ]; then
                 DIGEST=$(cat digest.txt)
                 echo "digest=$DIGEST" >> $GITHUB_OUTPUT
                 echo "Previous digest found: $DIGEST"
-                rm -f artifact.zip digest.txt
+                rm -f digest-artifact.zip digest.txt
               else
                 echo "No digest.txt found in artifact"
                 echo "digest=" >> $GITHUB_OUTPUT
@@ -70,6 +72,28 @@ jobs:
             else
               echo "No previous digest artifact found"
               echo "digest=" >> $GITHUB_OUTPUT
+            fi
+            
+            # Get SBOM artifact
+            SBOM_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-sbom") | .id' || echo "")
+            
+            if [ -n "$SBOM_ARTIFACT_ID" ]; then
+              echo "Found previous SBOM artifact: $SBOM_ARTIFACT_ID"
+              
+              # Download the SBOM artifact
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/${{ github.repository }}/actions/artifacts/$SBOM_ARTIFACT_ID/zip" \
+                > sbom-artifact.zip
+              
+              # Extract SBOM
+              mkdir -p previous-sbom
+              unzip -q sbom-artifact.zip -d previous-sbom/
+              echo "Previous SBOM downloaded successfully"
+              rm -f sbom-artifact.zip
+            else
+              echo "No previous SBOM artifact found"
             fi
           else
             echo "No previous successful workflow run found"
@@ -153,6 +177,14 @@ jobs:
         with:
           name: sbom
           path: sbom-output/
+
+      - name: Upload SBOM for future comparisons
+        uses: actions/upload-artifact@v4
+        with:
+          name: previous-sbom
+          path: sbom-output/
+          retention-days: 7
+          overwrite: true
 
   test:
     needs: build
@@ -322,6 +354,156 @@ jobs:
           name: sbom
           path: sbom-output
 
+      - name: Get previous SBOM for comparison
+        id: get-previous-sbom
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Try to get the SBOM from the most recent successful workflow run
+          echo "Fetching previous SBOM for comparison..."
+
+          # Get the most recent successful workflow run (excluding current)
+          LAST_RUN=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${{ github.repository }}/actions/workflows/build.yml/runs?status=success&per_page=2" \
+            --jq '.workflow_runs[1].id' || echo "")
+
+          if [ -n "$LAST_RUN" ]; then
+            echo "Found previous successful run: $LAST_RUN"
+            
+            # Get SBOM artifact from that run
+            SBOM_ARTIFACT_ID=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts" \
+              --jq '.artifacts[] | select(.name == "previous-sbom") | .id' || echo "")
+            
+            if [ -n "$SBOM_ARTIFACT_ID" ]; then
+              echo "Found previous SBOM artifact: $SBOM_ARTIFACT_ID"
+              
+              # Download the SBOM artifact
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/${{ github.repository }}/actions/artifacts/$SBOM_ARTIFACT_ID/zip" \
+                > previous-sbom.zip
+              
+              # Extract previous SBOM
+              mkdir -p previous-sbom
+              unzip -q previous-sbom.zip -d previous-sbom/
+              echo "has-previous=true" >> $GITHUB_OUTPUT
+              rm -f previous-sbom.zip
+            else
+              echo "No previous SBOM artifact found"
+              echo "has-previous=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No previous successful workflow run found"
+            echo "has-previous=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Compare SBOMs and generate changelog
+        id: compare-sboms
+        run: |
+          echo "Comparing SBOMs..."
+
+          CHANGELOG=""
+
+          if [ "${{ steps.get-previous-sbom.outputs.has-previous }}" == "true" ]; then
+            # Find SBOM files (they might be .spdx.json or .json)
+            CURRENT_SBOM=$(find sbom-output -name "*.json" -type f | head -1)
+            PREVIOUS_SBOM=$(find previous-sbom -name "*.json" -type f | head -1)
+            
+            if [ -n "$CURRENT_SBOM" ] && [ -n "$PREVIOUS_SBOM" ]; then
+              echo "Current SBOM: $CURRENT_SBOM"
+              echo "Previous SBOM: $PREVIOUS_SBOM"
+              
+              # Extract package information from SBOMs
+              # This handles SPDX format SBOMs
+              CURRENT_PACKAGES=$(jq -r '.packages[]? | select(.name != null and .versionInfo != null) | "\(.name)@\(.versionInfo)"' "$CURRENT_SBOM" 2>/dev/null | sort || echo "")
+              PREVIOUS_PACKAGES=$(jq -r '.packages[]? | select(.name != null and .versionInfo != null) | "\(.name)@\(.versionInfo)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
+              
+              # If SPDX format didn't work, try CycloneDX format
+              if [ -z "$CURRENT_PACKAGES" ]; then
+                CURRENT_PACKAGES=$(jq -r '.components[]? | select(.name != null and .version != null) | "\(.name)@\(.version)"' "$CURRENT_SBOM" 2>/dev/null | sort || echo "")
+                PREVIOUS_PACKAGES=$(jq -r '.components[]? | select(.name != null and .version != null) | "\(.name)@\(.version)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
+              fi
+              
+              if [ -n "$CURRENT_PACKAGES" ] && [ -n "$PREVIOUS_PACKAGES" ]; then
+                # Save to temporary files for comparison
+                echo "$CURRENT_PACKAGES" > current_pkgs.txt
+                echo "$PREVIOUS_PACKAGES" > previous_pkgs.txt
+                
+                # Find added packages
+                ADDED=$(comm -13 previous_pkgs.txt current_pkgs.txt)
+                # Find removed packages
+                REMOVED=$(comm -23 previous_pkgs.txt current_pkgs.txt)
+                # Find packages that exist in both but might have version changes
+                COMMON_PREV=$(comm -12 previous_pkgs.txt current_pkgs.txt | cut -d'@' -f1 | sort -u)
+                
+                # Check for version updates
+                UPDATED=""
+                for pkg in $COMMON_PREV; do
+                  OLD_VER=$(grep "^${pkg}@" previous_pkgs.txt | cut -d'@' -f2)
+                  NEW_VER=$(grep "^${pkg}@" current_pkgs.txt | cut -d'@' -f2)
+                  if [ "$OLD_VER" != "$NEW_VER" ] && [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ]; then
+                    UPDATED="${UPDATED}${pkg}: ${OLD_VER} → ${NEW_VER}\n"
+                  fi
+                done
+                
+                # Build changelog
+                if [ -n "$ADDED" ] || [ -n "$REMOVED" ] || [ -n "$UPDATED" ]; then
+                  CHANGELOG="### 📦 Package Changes\n\n"
+                  
+                  if [ -n "$ADDED" ]; then
+                    CHANGELOG="${CHANGELOG}#### ➕ Added Packages\n"
+                    echo "$ADDED" | while read -r pkg; do
+                      CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
+                    done
+                    CHANGELOG="${CHANGELOG}\n"
+                  fi
+                  
+                  if [ -n "$UPDATED" ]; then
+                    CHANGELOG="${CHANGELOG}#### 🔄 Updated Packages\n"
+                    CHANGELOG="${CHANGELOG}${UPDATED}\n"
+                  fi
+                  
+                  if [ -n "$REMOVED" ]; then
+                    CHANGELOG="${CHANGELOG}#### ➖ Removed Packages\n"
+                    echo "$REMOVED" | while read -r pkg; do
+                      CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
+                    done
+                    CHANGELOG="${CHANGELOG}\n"
+                  fi
+                else
+                  CHANGELOG="### 📦 Package Changes\n\nNo package changes detected (metadata or rebuild only).\n\n"
+                fi
+                
+                # Clean up
+                rm -f current_pkgs.txt previous_pkgs.txt
+              else
+                CHANGELOG="### 📦 Package Changes\n\nUnable to parse package information from SBOMs.\n\n"
+              fi
+            else
+              CHANGELOG="### 📦 Package Changes\n\nUnable to locate SBOM files for comparison.\n\n"
+            fi
+          else
+            CHANGELOG="### 📦 Package Changes\n\nThis is the first release or no previous SBOM available for comparison.\n\n"
+          fi
+
+          # Save changelog to file (GitHub Actions has issues with multiline outputs)
+          echo -e "$CHANGELOG" > changelog.txt
+
+          # Also save to environment file for use in release body
+          {
+            echo 'CHANGELOG_CONTENT<<EOF'
+            echo -e "$CHANGELOG"
+            echo 'EOF'
+          } >> $GITHUB_ENV
+
+          echo "changelog-generated=true" >> $GITHUB_OUTPUT
+
       - name: Tag image with release version
         uses: wolfi-dev/wolfi-act@main
         env:
@@ -344,12 +526,13 @@ jobs:
 
             echo "Successfully tagged image with $TAG"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
-          body: |
+      - name: Read changelog content
+        if: steps.compare-sboms.outputs.changelog-generated == 'true'
+        run: |
+          # Read the changelog content for the release body
+          {
+            echo 'RELEASE_BODY<<EOF'
+            cat << 'RELEASE_EOF'
             ## 🚀 Automated Release
 
             This release was automatically generated due to changes detected in the container image build.
@@ -360,6 +543,7 @@ jobs:
             - **Digest**: `${{ needs.build.outputs.digest }}`
 
             ### 📋 What's Changed
+            $(cat changelog.txt)
             This release includes the latest security updates and package changes from the Wolfi base image.
 
             ### 🔐 Verification
@@ -372,6 +556,51 @@ jobs:
 
             ### 📄 SBOM
             The Software Bill of Materials (SBOM) is attached to this release.
+            RELEASE_EOF
+            echo 'EOF'
+          } >> $GITHUB_ENV
+
+      - name: Set default release body
+        if: steps.compare-sboms.outputs.changelog-generated != 'true'
+        run: |
+          # Set default release body when no changelog is generated
+          {
+            echo 'RELEASE_BODY<<EOF'
+            cat << 'RELEASE_EOF'
+            ## 🚀 Automated Release
+
+            This release was automatically generated due to changes detected in the container image build.
+
+            ### 📦 Container Image
+            - **Image**: `ghcr.io/${{ github.repository }}:latest`
+            - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
+            - **Digest**: `${{ needs.build.outputs.digest }}`
+
+            ### 📋 What's Changed
+            Unable to generate package changelog.
+
+            This release includes the latest security updates and package changes from the Wolfi base image.
+
+            ### 🔐 Verification
+            You can verify the image signature using:
+            ```bash
+            cosign verify ${{ needs.build.outputs.digest }} \
+              --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+              --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+            ```
+
+            ### 📄 SBOM
+            The Software Bill of Materials (SBOM) is attached to this release.
+            RELEASE_EOF
+            echo 'EOF'
+          } >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          body: ${{ env.RELEASE_BODY }}
           files: |
             sbom-output/*
           generate_release_notes: false
