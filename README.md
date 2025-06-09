@@ -1,14 +1,25 @@
-<div align="center">
-  <img src="docs/logo.png" alt="Base Image Logo" width="100">
-</div>
+# Distroless glibc Base Image
 
-# Multi-Arch Distroless glibc Base Image
+<div align="center">
+  <img src="docs/logo.png" alt="Base Image Logo" width="300">
+</div>
 
 This repository builds, updates, and secures a multi-arch (`x86_64` + `arm64`) distroless `glibc` Docker base image. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
 
 Images are available with both the `latest` tag and version tags (e.g., `v2024.01.15`) for reproducible builds.
 
 This project has been configured to use the Chainguard `apko` toolchain, which is the best-in-class method for building minimal, secure, and reproducible container images.
+
+## Why You Need a Secure and Simple Base Image
+
+Modern containerized applications face increasing security threats and compliance requirements. Traditional base images often include unnecessary packages, tools, and potential vulnerabilities that expand your attack surface. A secure and simple base image is essential because:
+
+- **Reduced Attack Surface**: By including only the bare minimum required to run your application (glibc and ca-certificates), there are fewer components that could contain vulnerabilities
+- **Compliance**: Many security standards and regulations require minimizing unnecessary software in production environments
+- **Smaller Images**: Minimal images mean faster pulls, reduced storage costs, and quicker deployments
+- **No Shell or Package Manager**: Without these tools, attackers have fewer options if they manage to breach your container
+- **Immutable Infrastructure**: Distroless images encourage building immutable containers where everything is defined at build time
+- **Supply Chain Security**: Using a well-maintained base image with automated security updates helps protect against supply chain attacks
 
 ## Build Process
 
