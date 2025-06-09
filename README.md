@@ -1,4 +1,6 @@
-![Base Image Logo](docs/logo.png)
+<div align="center">
+  <img src="docs/logo.png" alt="Base Image Logo" width="100">
+</div>
 
 # Multi-Arch Distroless glibc Base Image
 
