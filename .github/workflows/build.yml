@@ -175,7 +175,7 @@ jobs:
         run: |
           cat > test-app/Dockerfile << 'EOF'
           # Build stage
-          FROM golang:1.23-alpine as builder
+          FROM golang:1.23-alpine AS builder
           WORKDIR /build
           COPY main.go .
           # Build for both architectures
@@ -183,6 +183,7 @@ jobs:
           RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o hello main.go
 
           # Runtime stage using our base image
+          ARG BASE_IMAGE
           FROM $BASE_IMAGE
           COPY --from=builder /build/hello /hello
           USER 65532:65532

@@ -46,7 +46,7 @@ EOF
 # Create Dockerfile
 cat > "$TEMP_DIR/Dockerfile" << EOF
 # Build stage
-FROM golang:1.24-alpine as builder
+FROM golang:1.23-alpine AS builder
 WORKDIR /build
 COPY main.go .
 ARG TARGETARCH
