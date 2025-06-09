@@ -492,16 +492,8 @@ jobs:
             CHANGELOG="### 📦 Package Changes\n\nThis is the first release or no previous SBOM available for comparison.\n\n"
           fi
 
-          # Save changelog to file (GitHub Actions has issues with multiline outputs)
+                    # Save changelog to file (GitHub Actions has issues with multiline outputs)
           echo -e "$CHANGELOG" > changelog.txt
-
-          # Also save to environment file for use in release body
-          {
-            echo 'CHANGELOG_CONTENT<<EOF'
-            echo -e "$CHANGELOG"
-            echo 'EOF'
-          } >> $GITHUB_ENV
-
           echo "changelog-generated=true" >> $GITHUB_OUTPUT
 
       - name: Tag image with release version
