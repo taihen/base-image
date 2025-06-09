@@ -1,3 +1,5 @@
+![Base Image Logo](docs/logo.png)
+
 # Multi-Arch Distroless glibc Base Image
 
 This repository builds, updates, and secures a multi-arch (`x86_64` + `arm64`) distroless `glibc` Docker base image. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
