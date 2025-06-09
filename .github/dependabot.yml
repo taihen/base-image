@@ -1,0 +1,15 @@
+# .github/dependabot.yml
+version: 2
+updates:
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/" # Location of workflows
+    schedule:
+      interval: "daily"
+    # Optionally add labels, assignees, reviewers
+    assignees:
+      - "taihen"
+    labels:
+     - "dependencies"
+     - "github_actions"

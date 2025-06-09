@@ -286,6 +286,28 @@ jobs:
           name: sbom
           path: sbom-output
 
+      - name: Tag image with release version
+        uses: wolfi-dev/wolfi-act@main
+        env:
+          OCI_HOST: ghcr.io
+          OCI_REPO: ${{ github.repository }}
+        with:
+          packages: crane
+          command: |
+            set -e
+
+            # Log in to the GitHub Container Registry
+            echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
+
+            # Extract the digest without the registry prefix for crane
+            DIGEST="${{ needs.build.outputs.digest }}"
+            TAG="${{ steps.tag.outputs.tag }}"
+
+            # Tag the existing image digest with the version tag
+            crane tag "$DIGEST" "$TAG"
+
+            echo "Successfully tagged image with $TAG"
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -298,6 +320,7 @@ jobs:
 
             ### 📦 Container Image
             - **Image**: `ghcr.io/${{ github.repository }}:latest`
+            - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
             - **Digest**: `${{ needs.build.outputs.digest }}`
 
             ### 📋 What's Changed

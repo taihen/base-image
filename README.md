@@ -2,6 +2,8 @@
 
 This repository builds, updates, and secures a multi-arch (`x86_64` + `arm64`) distroless `glibc` Docker base image. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
 
+Images are available with both the `latest` tag and version tags (e.g., `v2024.01.15`) for reproducible builds.
+
 This project has been configured to use the Chainguard `apko` toolchain, which is the best-in-class method for building minimal, secure, and reproducible container images.
 
 ## Build Process
@@ -26,23 +28,43 @@ This declarative approach, inspired by Google Distroless and perfected by Chaing
   - A high-quality SBOM (Software Bill of Materials) is generated natively by `apko` during the build.
 - **CI/CD:** A streamlined GitHub Actions workflow using [`wolfi-act`](https://github.com/wolfi-dev/wolfi-act) handles the entire build, publish, and sign process in a single, efficient step.
 
-This approach aligns with NIS2 and SOC2 best practices for supply chain security, minimal images, non-root execution, and continuous patching.
+## What is apko and Wolfi?
+
+### apko
+[apko](https://github.com/chainguard-dev/apko) is a declarative tool for building container images using Alpine APK packages. Unlike traditional Dockerfiles that use imperative commands, apko uses a YAML configuration to define exactly what goes into an image. This approach:
+- Produces minimal, reproducible images
+- Generates SBOMs (Software Bill of Materials) automatically
+- Eliminates unnecessary build artifacts and package managers
+- Creates truly distroless images without shells or other debugging tools
+
+### Wolfi
+[Wolfi](https://github.com/wolfi-dev) is a Linux distribution designed specifically for containers, created by Chainguard. Key features:
+- **glibc-based**: Unlike Alpine (which uses musl), Wolfi uses glibc for better compatibility
+- **Security-focused**: Rapid CVE patching and minimal attack surface
+- **Supply chain hardened**: All packages are signed and built with provenance
+- **Container-native**: Designed from the ground up for containerized workloads
+- **Daily updates**: Packages are rebuilt frequently to incorporate the latest security patches
+
+Together, apko and Wolfi provide a secure foundation for building container images that meet range of requirements while maintaining minimal size and attack surface.
 
 ## How to Use
 
-You can use this image as a secure and minimal base for your applications.
+You can use this image as a secure and minimal base for your applications. You can use either the `latest` tag for the most recent version or a specific version tag (e.g., `v2024.01.15`) for reproducible builds.
 
 ### Example: Go (CGO-enabled)
 
 ```dockerfile
-FROM golang:1.23 as builder
+FROM golang:1.23 AS builder
 WORKDIR /src
 COPY main.go .
 ARG TARGETARCH
 ENV CGO_ENABLED=1 GOOS=linux GOARCH=$TARGETARCH
 RUN go build -o /hello main.go
 
+# Use latest tag
 FROM ghcr.io/taihen/base-image:latest
+# OR use a specific version for reproducible builds
+# FROM ghcr.io/taihen/base-image:v2024.01.15
 COPY --from=builder /hello /hello
 USER 65532:65532
 ENTRYPOINT ["/hello"]
@@ -51,7 +73,7 @@ ENTRYPOINT ["/hello"]
 ### Example: Java (custom JRE with jlink)
 
 ```dockerfile
-FROM eclipse-temurin:17-jdk as builder
+FROM eclipse-temurin:17-jdk AS builder
 WORKDIR /app
 COPY Hello.java .
 RUN javac Hello.java
@@ -83,7 +105,7 @@ To build the image locally, you need Docker with BuildKit enabled.
     ```sh
     # Test the latest published image
     ./test/test-image.sh
-    
+
     # Test a specific image
     ./test/test-image.sh ghcr.io/taihen/base-image:latest
     ```
@@ -127,6 +149,11 @@ This repository includes an intelligent automatic release system that creates Gi
 ### Release Naming
 
 Releases are automatically tagged with a date-based version format: `vYYYY.MM.DD` (e.g., `v2024.01.15`). If multiple releases occur on the same day, a counter is appended (e.g., `v2024.01.15.1`).
+
+Each release creates:
+- A GitHub release with the version tag
+- A Docker image tagged with the same version (e.g., `ghcr.io/taihen/base-image:v2024.01.15`)
+- The `latest` tag is also updated to point to the newest release
 
 ## Automated Testing
 
