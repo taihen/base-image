@@ -174,6 +174,9 @@ jobs:
       - name: Create test Dockerfile
         run: |
           cat > test-app/Dockerfile << 'EOF'
+          # Declare build args at the top for global scope
+          ARG BASE_IMAGE
+
           # Build stage
           FROM golang:1.23-alpine AS builder
           WORKDIR /build
@@ -183,7 +186,6 @@ jobs:
           RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o hello main.go
 
           # Runtime stage using our base image
-          ARG BASE_IMAGE
           FROM $BASE_IMAGE
           COPY --from=builder /build/hello /hello
           USER 65532:65532
