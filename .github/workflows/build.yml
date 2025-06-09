@@ -522,33 +522,42 @@ jobs:
         if: steps.compare-sboms.outputs.changelog-generated == 'true'
         run: |
           # Read the changelog content for the release body
+          cat > release-body.md << 'RELEASE_EOF'
+          ## 🚀 Automated Release
+
+          This release was automatically generated due to changes detected in the container image build.
+
+          ### 📦 Container Image
+          - **Image**: `ghcr.io/${{ github.repository }}:latest`
+          - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
+          - **Digest**: `${{ needs.build.outputs.digest }}`
+
+          ### 📋 What's Changed
+          RELEASE_EOF
+
+          # Append the changelog content
+          cat changelog.txt >> release-body.md
+
+          # Append the rest of the release body
+          cat >> release-body.md << 'RELEASE_EOF'
+          This release includes the latest security updates and package changes from the Wolfi base image.
+
+          ### 🔐 Verification
+          You can verify the image signature using:
+          ```bash
+          cosign verify ${{ needs.build.outputs.digest }} \
+            --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+          ```
+
+          ### 📄 SBOM
+          The Software Bill of Materials (SBOM) is attached to this release.
+          RELEASE_EOF
+
+          # Save to environment variable
           {
             echo 'RELEASE_BODY<<EOF'
-            cat << 'RELEASE_EOF'
-            ## 🚀 Automated Release
-
-            This release was automatically generated due to changes detected in the container image build.
-
-            ### 📦 Container Image
-            - **Image**: `ghcr.io/${{ github.repository }}:latest`
-            - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
-            - **Digest**: `${{ needs.build.outputs.digest }}`
-
-            ### 📋 What's Changed
-            $(cat changelog.txt)
-            This release includes the latest security updates and package changes from the Wolfi base image.
-
-            ### 🔐 Verification
-            You can verify the image signature using:
-            ```bash
-            cosign verify ${{ needs.build.outputs.digest }} \
-              --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
-              --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-            ```
-
-            ### 📄 SBOM
-            The Software Bill of Materials (SBOM) is attached to this release.
-            RELEASE_EOF
+            cat release-body.md
             echo 'EOF'
           } >> $GITHUB_ENV
 
@@ -556,34 +565,37 @@ jobs:
         if: steps.compare-sboms.outputs.changelog-generated != 'true'
         run: |
           # Set default release body when no changelog is generated
+          cat > release-body.md << 'RELEASE_EOF'
+          ## 🚀 Automated Release
+
+          This release was automatically generated due to changes detected in the container image build.
+
+          ### 📦 Container Image
+          - **Image**: `ghcr.io/${{ github.repository }}:latest`
+          - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
+          - **Digest**: `${{ needs.build.outputs.digest }}`
+
+          ### 📋 What's Changed
+          Unable to generate package changelog.
+
+          This release includes the latest security updates and package changes from the Wolfi base image.
+
+          ### 🔐 Verification
+          You can verify the image signature using:
+          ```bash
+          cosign verify ${{ needs.build.outputs.digest }} \
+            --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+          ```
+
+          ### 📄 SBOM
+          The Software Bill of Materials (SBOM) is attached to this release.
+          RELEASE_EOF
+
+          # Save to environment variable
           {
             echo 'RELEASE_BODY<<EOF'
-            cat << 'RELEASE_EOF'
-            ## 🚀 Automated Release
-
-            This release was automatically generated due to changes detected in the container image build.
-
-            ### 📦 Container Image
-            - **Image**: `ghcr.io/${{ github.repository }}:latest`
-            - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
-            - **Digest**: `${{ needs.build.outputs.digest }}`
-
-            ### 📋 What's Changed
-            Unable to generate package changelog.
-
-            This release includes the latest security updates and package changes from the Wolfi base image.
-
-            ### 🔐 Verification
-            You can verify the image signature using:
-            ```bash
-            cosign verify ${{ needs.build.outputs.digest }} \
-              --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
-              --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-            ```
-
-            ### 📄 SBOM
-            The Software Bill of Materials (SBOM) is attached to this release.
-            RELEASE_EOF
+            cat release-body.md
             echo 'EOF'
           } >> $GITHUB_ENV
 
