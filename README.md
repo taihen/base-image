@@ -10,7 +10,7 @@ Images are available with both the `latest` tag and version tags (e.g., `v2024.0
 
 This project has been configured to use the Chainguard `apko` toolchain, which is the best-in-class method for building minimal, secure, and reproducible container images.
 
-Curious about distroless, checkout my [blog post](https://taihen.org/distroless/).
+Curious about distroless, checkout my [blog post](https://taihen.org/posts/distroless/).
 
 ## Why You Need a Secure and Simple Base Image
 
