@@ -4,11 +4,13 @@
   <img src="docs/logo.png" alt="Base Image Logo" width="300">
 </div>
 
-This repository builds, updates, and secures a multi-arch (`x86_64` + `arm64`) distroless `glibc` Docker base image. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
+This repository builds, updates, and secures a multi-arch (currently only `x86_64` and `arm64`) **distroless `glibc` Docker base image**. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
 
 Images are available with both the `latest` tag and version tags (e.g., `v2024.01.15`) for reproducible builds.
 
 This project has been configured to use the Chainguard `apko` toolchain, which is the best-in-class method for building minimal, secure, and reproducible container images.
+
+Curious about distroless, checkout my [blog post](https://taihen.org/distroless/).
 
 ## Why You Need a Secure and Simple Base Image
 
