@@ -26,6 +26,7 @@ Modern containerized applications face increasing security threats and complianc
 ## Build Process
 
 Instead of a `Dockerfile`, this project uses a declarative [`apko.yaml`](./apko.yaml) file to define the image contents. This file specifies:
+
 - The minimal set of packages required from the [Wolfi](https://github.com/wolfi-dev) repository (`glibc`, `ca-certificates`, etc.).
 - A non-root user (`65532:65532`) for secure execution.
 - The target architectures (`linux/amd64`, `linux/arm64`).
@@ -48,14 +49,18 @@ This declarative approach, inspired by Google Distroless and perfected by Chaing
 ## What is apko and Wolfi?
 
 ### apko
+
 [apko](https://github.com/chainguard-dev/apko) is a declarative tool for building container images using Alpine APK packages. Unlike traditional Dockerfiles that use imperative commands, apko uses a YAML configuration to define exactly what goes into an image. This approach:
+
 - Produces minimal, reproducible images
 - Generates SBOMs (Software Bill of Materials) automatically
 - Eliminates unnecessary build artifacts and package managers
 - Creates truly distroless images without shells or other debugging tools
 
 ### Wolfi
+
 [Wolfi](https://github.com/wolfi-dev) is a Linux distribution designed specifically for containers, created by Chainguard. Key features:
+
 - **glibc-based**: Unlike Alpine (which uses musl), Wolfi uses glibc for better compatibility
 - **Security-focused**: Rapid CVE patching and minimal attack surface
 - **Supply chain hardened**: All packages are signed and built with provenance
@@ -107,18 +112,21 @@ ENTRYPOINT ["/jre/bin/java", "-jar", "/app/hello.jar"]
 
 To build the image locally, you need Docker with BuildKit enabled.
 
-1.  **Enable BuildKit:**
+1. **Enable BuildKit:**
+
     ```sh
     export DOCKER_BUILDKIT=1
     ```
 
-2.  **Build for multiple platforms:**
+2. **Build for multiple platforms:**
+
     ```sh
     docker buildx create --use
     docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/taihen/base-image:latest --push .
     ```
 
-3.  **Run the test suite:**
+3. **Run the test suite:**
+
     ```sh
     # Test the latest published image
     ./test/test-image.sh
@@ -137,8 +145,8 @@ To build the image locally, you need Docker with BuildKit enabled.
 
 The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process. It is triggered on:
 
--   A `push` to the `main` branch.
--   A daily schedule (`cron: "0 5 * * *"`) to ensure the image is kept up-to-date with upstream packages.
+- A `push` to the `main` branch.
+- A daily schedule (`cron: "0 5 * * *"`) to ensure the image is kept up-to-date with upstream packages.
 
 ## Automatic Release System
 
@@ -168,6 +176,7 @@ This repository includes an intelligent automatic release system that creates Gi
 Releases are automatically tagged with a date-based version format: `vYYYY.MM.DD` (e.g., `v2024.01.15`). If multiple releases occur on the same day, a counter is appended (e.g., `v2024.01.15.1`).
 
 Each release creates:
+
 - A GitHub release with the version tag
 - A Docker image tagged with the same version (e.g., `ghcr.io/taihen/base-image:v2024.01.15`)
 - The `latest` tag is also updated to point to the newest release
@@ -191,6 +200,7 @@ Before creating a release, the workflow runs comprehensive tests to ensure the b
 ### Test Failure Handling
 
 If any test fails:
+
 - The workflow stops immediately
 - No release is created
 - The build artifacts remain available for debugging
