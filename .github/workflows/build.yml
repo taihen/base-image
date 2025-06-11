@@ -411,14 +411,33 @@ jobs:
           CHANGELOG=""
 
           if [ "${{ steps.get-previous-sbom.outputs.has-previous }}" == "true" ]; then
-            # Find SBOM files (they might be .spdx.json or .json)
-            CURRENT_SBOM=$(find sbom-output -name "*.json" -type f | head -1)
-            PREVIOUS_SBOM=$(find previous-sbom -name "*.json" -type f | head -1)
+            # Find x86_64/amd64 SBOM files (exclude index SBOMs)
+            CURRENT_SBOM=$(find sbom-output \( -name "*x86_64*.json" -o -name "*amd64*.json" \) -type f | grep -v index | head -1)
+            PREVIOUS_SBOM=$(find previous-sbom \( -name "*x86_64*.json" -o -name "*amd64*.json" \) -type f | grep -v index | head -1)
             
+            # Fallback: if no x86_64/amd64 SBOM found, try any non-index SBOM
+            if [ -z "$CURRENT_SBOM" ]; then
+              echo "No x86_64/amd64 SBOM found, falling back to any architecture..."
+              CURRENT_SBOM=$(find sbom-output -name "*.json" -type f | grep -v index | head -1)
+            fi
+            if [ -z "$PREVIOUS_SBOM" ]; then
+              echo "No previous x86_64/amd64 SBOM found, falling back to any architecture..."
+              PREVIOUS_SBOM=$(find previous-sbom -name "*.json" -type f | grep -v index | head -1)
+            fi
+
             if [ -n "$CURRENT_SBOM" ] && [ -n "$PREVIOUS_SBOM" ]; then
               echo "Current SBOM: $CURRENT_SBOM"
               echo "Previous SBOM: $PREVIOUS_SBOM"
               
+              # Verify we're comparing architecture-specific SBOMs
+              echo "=== SBOM Type Verification ==="
+              if grep -q '"description": "Multi-arch image index"' "$CURRENT_SBOM" 2>/dev/null; then
+                echo "WARNING: Current SBOM is an index SBOM, not architecture-specific!"
+              fi
+              if grep -q '"description": "Multi-arch image index"' "$PREVIOUS_SBOM" 2>/dev/null; then
+                echo "WARNING: Previous SBOM is an index SBOM, not architecture-specific!"
+              fi
+
               # Debug: Show SBOM structure
               echo "=== SBOM Structure Debug ==="
               echo "Current SBOM sample:"
