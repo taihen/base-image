@@ -419,10 +419,15 @@ jobs:
               echo "Current SBOM: $CURRENT_SBOM"
               echo "Previous SBOM: $PREVIOUS_SBOM"
               
+              # Debug: Show SBOM structure
+              echo "=== SBOM Structure Debug ==="
+              echo "Current SBOM sample:"
+              jq -r 'keys' "$CURRENT_SBOM" 2>/dev/null || echo "Failed to parse current SBOM"
+
               # Extract package information from SBOMs
-              # This handles SPDX format SBOMs
-              CURRENT_PACKAGES=$(jq -r '.packages[]? | select(.name != null and .versionInfo != null) | "\(.name)@\(.versionInfo)"' "$CURRENT_SBOM" 2>/dev/null | sort || echo "")
-              PREVIOUS_PACKAGES=$(jq -r '.packages[]? | select(.name != null and .versionInfo != null) | "\(.name)@\(.versionInfo)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
+              # This handles SPDX format SBOMs - filter for only Wolfi APK packages
+              CURRENT_PACKAGES=$(jq -r '.packages[] | select(.externalRefs[]? | .referenceLocator | startswith("pkg:apk/wolfi/")) | "\(.name)@\(.versionInfo)"' "$CURRENT_SBOM" 2>/dev/null | sort || echo "")
+              PREVIOUS_PACKAGES=$(jq -r '.packages[] | select(.externalRefs[]? | .referenceLocator | startswith("pkg:apk/wolfi/")) | "\(.name)@\(.versionInfo)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
               
               # If SPDX format didn't work, try CycloneDX format
               if [ -z "$CURRENT_PACKAGES" ]; then
@@ -430,25 +435,58 @@ jobs:
                 PREVIOUS_PACKAGES=$(jq -r '.components[]? | select(.name != null and .version != null) | "\(.name)@\(.version)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
               fi
               
+              # Debug: Show extracted packages
+              echo "=== Package Extraction Debug ==="
+              echo "Current packages count: $(echo "$CURRENT_PACKAGES" | wc -l)"
+              echo "Previous packages count: $(echo "$PREVIOUS_PACKAGES" | wc -l)"
+
               if [ -n "$CURRENT_PACKAGES" ] && [ -n "$PREVIOUS_PACKAGES" ]; then
                 # Save to temporary files for comparison
                 echo "$CURRENT_PACKAGES" > current_pkgs.txt
                 echo "$PREVIOUS_PACKAGES" > previous_pkgs.txt
                 
-                # Find added packages
-                ADDED=$(comm -13 previous_pkgs.txt current_pkgs.txt)
-                # Find removed packages
-                REMOVED=$(comm -23 previous_pkgs.txt current_pkgs.txt)
-                # Find packages that exist in both but might have version changes
-                COMMON_PREV=$(comm -12 previous_pkgs.txt current_pkgs.txt | cut -d'@' -f1 | sort -u)
+                # Extract just package names (without versions) for both
+                cut -d'@' -f1 current_pkgs.txt | sort -u > current_names.txt
+                cut -d'@' -f1 previous_pkgs.txt | sort -u > previous_names.txt
                 
+                # Find added package names (new packages)
+                ADDED_NAMES=$(comm -13 previous_names.txt current_names.txt)
+                # Find removed package names
+                REMOVED_NAMES=$(comm -23 previous_names.txt current_names.txt)
+                # Find common package names (for version comparison)
+                COMMON_NAMES=$(comm -12 previous_names.txt current_names.txt)
+
+                # Get full package info for added/removed
+                ADDED=""
+                if [ -n "$ADDED_NAMES" ]; then
+                  for name in $ADDED_NAMES; do
+                    pkg=$(grep "^${name}@" current_pkgs.txt || true)
+                    if [ -n "$pkg" ]; then
+                      ADDED="${ADDED}${pkg}\n"
+                    fi
+                  done
+                fi
+
+                REMOVED=""
+                if [ -n "$REMOVED_NAMES" ]; then
+                  for name in $REMOVED_NAMES; do
+                    pkg=$(grep "^${name}@" previous_pkgs.txt || true)
+                    if [ -n "$pkg" ]; then
+                      REMOVED="${REMOVED}${pkg}\n"
+                    fi
+                  done
+                fi
+
                 # Check for version updates
                 UPDATED=""
-                for pkg in $COMMON_PREV; do
-                  OLD_VER=$(grep "^${pkg}@" previous_pkgs.txt | cut -d'@' -f2)
-                  NEW_VER=$(grep "^${pkg}@" current_pkgs.txt | cut -d'@' -f2)
-                  if [ "$OLD_VER" != "$NEW_VER" ] && [ -n "$OLD_VER" ] && [ -n "$NEW_VER" ]; then
-                    UPDATED="${UPDATED}${pkg}: ${OLD_VER} → ${NEW_VER}\n"
+                for pkg_name in $COMMON_NAMES; do
+                  OLD_FULL=$(grep "^${pkg_name}@" previous_pkgs.txt || echo "")
+                  NEW_FULL=$(grep "^${pkg_name}@" current_pkgs.txt || echo "")
+
+                  if [ -n "$OLD_FULL" ] && [ -n "$NEW_FULL" ] && [ "$OLD_FULL" != "$NEW_FULL" ]; then
+                    OLD_VER=$(echo "$OLD_FULL" | cut -d'@' -f2)
+                    NEW_VER=$(echo "$NEW_FULL" | cut -d'@' -f2)
+                    UPDATED="${UPDATED}${pkg_name}: ${OLD_VER} → ${NEW_VER}\n"
                   fi
                 done
                 
@@ -458,21 +496,24 @@ jobs:
                   
                   if [ -n "$ADDED" ]; then
                     CHANGELOG="${CHANGELOG}#### ➕ Added Packages\n"
-                    echo "$ADDED" | while read -r pkg; do
-                      CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
+                    echo -e "$ADDED" | while read -r pkg; do
+                      [ -n "$pkg" ] && CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
                     done
                     CHANGELOG="${CHANGELOG}\n"
                   fi
                   
                   if [ -n "$UPDATED" ]; then
                     CHANGELOG="${CHANGELOG}#### 🔄 Updated Packages\n"
-                    CHANGELOG="${CHANGELOG}${UPDATED}\n"
+                    echo -e "$UPDATED" | while read -r line; do
+                      [ -n "$line" ] && CHANGELOG="${CHANGELOG}- \`${line}\`\n"
+                    done
+                    CHANGELOG="${CHANGELOG}\n"
                   fi
                   
                   if [ -n "$REMOVED" ]; then
                     CHANGELOG="${CHANGELOG}#### ➖ Removed Packages\n"
-                    echo "$REMOVED" | while read -r pkg; do
-                      CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
+                    echo -e "$REMOVED" | while read -r pkg; do
+                      [ -n "$pkg" ] && CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
                     done
                     CHANGELOG="${CHANGELOG}\n"
                   fi
@@ -481,7 +522,7 @@ jobs:
                 fi
                 
                 # Clean up
-                rm -f current_pkgs.txt previous_pkgs.txt
+                rm -f current_pkgs.txt previous_pkgs.txt current_names.txt previous_names.txt
               else
                 CHANGELOG="### 📦 Package Changes\n\nUnable to parse package information from SBOMs.\n\n"
               fi
