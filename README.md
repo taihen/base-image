@@ -27,7 +27,7 @@ Modern containerized applications face increasing security threats and complianc
 
 Instead of a `Dockerfile`, this project uses a declarative [`apko.yaml`](./apko.yaml) file to define the image contents. This file specifies:
 
-- The minimal set of packages required from the [Wolfi](https://github.com/wolfi-dev) repository (`glibc`, `ca-certificates`, etc.).
+- The minimal set of packages required from the [Wolfi](https://github.com/wolfi-dev) repository (`glibc`, `ca-certificates-bundle`, etc.).
 - A non-root user (`65532:65532`) for secure execution.
 - The target architectures (`linux/amd64`, `linux/arm64`).
 
@@ -45,6 +45,44 @@ This declarative approach, inspired by Google Distroless and perfected by Chaing
   - Images are signed with Cosign using keyless signing.
   - A high-quality SBOM (Software Bill of Materials) is generated natively by `apko` during the build.
 - **CI/CD:** A streamlined GitHub Actions workflow using [`wolfi-act`](https://github.com/wolfi-dev/wolfi-act) handles the entire build, publish, and sign process in a single, efficient step.
+
+## Debug Image
+
+While the main distroless image is designed for production use without a shell or debugging tools, sometimes you need these capabilities during development or troubleshooting. For this purpose, we provide a debug variant of the base image.
+
+### Debug Image Configuration
+
+The debug image is defined in [`debug.yaml`](./debug.yaml) and extends the base configuration with:
+
+- **`wolfi-base` package**: Adds busybox (providing common Unix utilities) and apk-tools (package manager)
+- **Root user**: Runs as root instead of the non-root user (65532:65532)
+- **Shell entrypoint**: Sets `/bin/sh -l` as the default entrypoint
+
+### When to Use the Debug Image
+
+⚠️ **Warning**: The debug image should **NEVER** be used in production as it significantly increases the attack surface by including a shell and running as root.
+
+Use cases for the debug image:
+- Local development and testing
+- Debugging application issues in non-production environments
+- Exploring the container filesystem
+- Installing additional packages for testing
+- Troubleshooting permission or dependency issues
+
+### Building the Debug Image Locally
+
+To build the debug image using apko:
+
+```sh
+# Build for a single architecture
+docker run -v $PWD:/work cgr.dev/chainguard/apko build debug.yaml debug:test debug.tar
+
+# Load into Docker
+docker load < debug.tar
+
+# Run the debug image
+docker run -it --rm debug:test
+```
 
 ## What is apko and Wolfi?
 
