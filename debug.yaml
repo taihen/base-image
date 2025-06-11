@@ -1,0 +1,15 @@
+# This file defines a debug image for the apko base image.
+# It is used to test the apko base image and its contents.
+# wolfi-base is a mate package which adds busybox and apk-tools to the container.
+
+include: apko.yaml
+contents:
+  packages:
+    - wolfi-base
+accounts:
+  run-as: root
+archs:
+  - x86_64
+  - aarch64
+entrypoint:
+  command: /bin/sh -l
