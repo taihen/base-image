@@ -146,18 +146,23 @@ jobs:
             # Log in to the GitHub Container Registry
             echo "${{ secrets.GITHUB_TOKEN }}" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
 
-            # Create a directory for the SBOMs
-            mkdir -p sbom-output
+            # Create directories for the SBOMs
+            mkdir -p sbom-main sbom-debug
 
             echo "Building main image..."
             # Publish the main multi-arch image using apko, which also generates an SBOM.
             main_digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
-              --sbom-path=sbom-output/main)
+              --sbom-path=sbom-main)
 
             echo "Building debug image..."
             # Publish the debug multi-arch image using apko, which also generates an SBOM.
             debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
-              --sbom-path=sbom-output/debug)
+              --sbom-path=sbom-debug)
+
+            # Consolidate SBOMs into a single output directory
+            mkdir -p sbom-output
+            cp -r sbom-main/* sbom-output/ 2>/dev/null || true
+            cp -r sbom-debug/* sbom-output/ 2>/dev/null || true
 
             # Sign both image digests using Cosign keyless signing.
             echo "Signing main image..."
