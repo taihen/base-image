@@ -63,11 +63,24 @@ The debug image is defined in [`debug.yaml`](./debug.yaml) and extends the base 
 ⚠️ **Warning**: The debug image should **NEVER** be used in production as it significantly increases the attack surface by including a shell and running as root.
 
 Use cases for the debug image:
+
 - Local development and testing
 - Debugging application issues in non-production environments
 - Exploring the container filesystem
 - Installing additional packages for testing
 - Troubleshooting permission or dependency issues
+
+### Available Image Tags
+
+**Main Production Image:**
+
+- `ghcr.io/taihen/base-image:latest` - Latest production build
+- `ghcr.io/taihen/base-image:v2024.01.15` - Specific version tag
+
+**Debug Development Image:**
+
+- `ghcr.io/taihen/base-image:debug` - Latest debug build
+- `ghcr.io/taihen/base-image:v2024.01.15-debug` - Specific version debug tag
 
 ### Building the Debug Image Locally
 
@@ -146,6 +159,33 @@ COPY --from=builder /app/hello.jar /app/hello.jar
 ENTRYPOINT ["/jre/bin/java", "-jar", "/app/hello.jar"]
 ```
 
+### Using the Debug Image for Development
+
+```dockerfile
+# For development and debugging
+FROM ghcr.io/taihen/base-image:debug
+
+# You can install additional packages with apk
+RUN apk add --no-cache curl jq
+
+# Debug your application interactively
+COPY my-app /usr/local/bin/
+ENTRYPOINT ["/bin/sh"]  # or ["/usr/local/bin/my-app"]
+```
+
+**Quick debugging session:**
+
+```bash
+# Run the debug image interactively
+docker run -it --rm ghcr.io/taihen/base-image:debug
+
+# Inside the container, you have shell access and tools
+/ # apk add --no-cache curl
+/ # curl -s https://httpbin.org/json | jq
+/ # ps aux
+/ # ls -la /
+```
+
 ## Local Testing
 
 To build the image locally, you need Docker with BuildKit enabled.
@@ -181,10 +221,15 @@ To build the image locally, you need Docker with BuildKit enabled.
 
 ## Automation
 
-The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process. It is triggered on:
+The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process for both production and debug images. It is triggered on:
 
 - A `push` to the `main` branch.
-- A daily schedule (`cron: "0 5 * * *"`) to ensure the image is kept up-to-date with upstream packages.
+- A daily schedule (`cron: "0 5 * * *"`) to ensure images are kept up-to-date with upstream packages.
+
+The workflow builds both image variants in parallel and applies the following tagging strategy:
+
+- **Production images**: Tagged with `latest` and version tags (e.g., `v2024.01.15`)
+- **Debug images**: Tagged with `debug` and version-debug tags (e.g., `v2024.01.15-debug`)
 
 ## Automatic Release System
 
@@ -221,19 +266,19 @@ Each release creates:
 
 ## Automated Testing
 
-Before creating a release, the workflow runs comprehensive tests to ensure the base image works correctly:
+Before creating a release, the workflow runs comprehensive tests to ensure both the production and debug images work correctly:
 
 ### Test Suite
 
-1. **Go Application Test**: Builds and runs a hello world Go application on the base image
+1. **Go Application Test**: Builds and runs a hello world Go application on both image variants
    - Verifies CGO compatibility (glibc linkage)
    - Tests both `linux/amd64` and `linux/arm64` architectures
-   - Confirms non-root user execution (UID/GID 65532)
+   - Confirms correct user execution (UID 65532 for production, UID 0 for debug)
    - Validates environment variable handling
 
-2. **Multi-Platform Build Test**: Ensures the image works correctly in multi-architecture builds
+2. **Multi-Platform Build Test**: Ensures both images work correctly in multi-architecture builds
 
-3. **Security Scan**: Runs Trivy to scan for vulnerabilities and reports any critical or high-severity issues
+3. **Security Scan**: Runs Trivy to scan both image variants for vulnerabilities and reports any critical or high-severity issues
 
 ### Test Failure Handling
 

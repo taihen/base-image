@@ -1,4 +1,4 @@
-name: Build & Publish Multi-Arch Distroless glibc Base
+name: Build & Publish Multi-Arch Distroless glibc Base & Debug Images
 
 on:
   push:
@@ -15,7 +15,8 @@ jobs:
       packages: write
       id-token: write # Required for keyless signing with Cosign
     outputs:
-      digest: ${{ steps.extract-digest.outputs.digest }}
+      main-digest: ${{ steps.extract-digest.outputs.main-digest }}
+      debug-digest: ${{ steps.extract-digest.outputs.debug-digest }}
       has-changes: ${{ steps.compare.outputs.has-changes }}
     steps:
       - name: Checkout repository
@@ -27,7 +28,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Try to get the digest and SBOM from the most recent successful workflow run
-          echo "Fetching previous digest and SBOM from last successful workflow run..."
+          echo "Fetching previous digests and SBOMs from last successful workflow run..."
 
           # Get the most recent successful workflow run
           LAST_RUN=$(gh api \
@@ -45,36 +46,65 @@ jobs:
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts")
             
-            # Get digest artifact
-            DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-digest") | .id' || echo "")
+            # Get main digest artifact
+            MAIN_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-main-digest") | .id' || echo "")
             
-            if [ -n "$DIGEST_ARTIFACT_ID" ]; then
-              echo "Found previous digest artifact: $DIGEST_ARTIFACT_ID"
+            if [ -n "$MAIN_DIGEST_ARTIFACT_ID" ]; then
+              echo "Found previous main digest artifact: $MAIN_DIGEST_ARTIFACT_ID"
               
               # Download the digest artifact
               gh api \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$DIGEST_ARTIFACT_ID/zip" \
-                > digest-artifact.zip
+                "/repos/${{ github.repository }}/actions/artifacts/$MAIN_DIGEST_ARTIFACT_ID/zip" \
+                > main-digest-artifact.zip
               
               # Extract and read the digest
-              unzip -q digest-artifact.zip
+              unzip -q main-digest-artifact.zip
               if [ -f digest.txt ]; then
-                DIGEST=$(cat digest.txt)
-                echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-                echo "Previous digest found: $DIGEST"
-                rm -f digest-artifact.zip digest.txt
+                MAIN_DIGEST=$(cat digest.txt)
+                echo "main-digest=$MAIN_DIGEST" >> $GITHUB_OUTPUT
+                echo "Previous main digest found: $MAIN_DIGEST"
+                rm -f main-digest-artifact.zip digest.txt
               else
-                echo "No digest.txt found in artifact"
-                echo "digest=" >> $GITHUB_OUTPUT
+                echo "No digest.txt found in main artifact"
+                echo "main-digest=" >> $GITHUB_OUTPUT
               fi
             else
-              echo "No previous digest artifact found"
-              echo "digest=" >> $GITHUB_OUTPUT
+              echo "No previous main digest artifact found"
+              echo "main-digest=" >> $GITHUB_OUTPUT
+            fi
+
+            # Get debug digest artifact
+            DEBUG_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-debug-digest") | .id' || echo "")
+            
+            if [ -n "$DEBUG_DIGEST_ARTIFACT_ID" ]; then
+              echo "Found previous debug digest artifact: $DEBUG_DIGEST_ARTIFACT_ID"
+              
+              # Download the digest artifact
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/${{ github.repository }}/actions/artifacts/$DEBUG_DIGEST_ARTIFACT_ID/zip" \
+                > debug-digest-artifact.zip
+              
+              # Extract and read the digest
+              unzip -q debug-digest-artifact.zip
+              if [ -f digest.txt ]; then
+                DEBUG_DIGEST=$(cat digest.txt)
+                echo "debug-digest=$DEBUG_DIGEST" >> $GITHUB_OUTPUT
+                echo "Previous debug digest found: $DEBUG_DIGEST"
+                rm -f debug-digest-artifact.zip digest.txt
+              else
+                echo "No digest.txt found in debug artifact"
+                echo "debug-digest=" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "No previous debug digest artifact found"
+              echo "debug-digest=" >> $GITHUB_OUTPUT
             fi
             
-            # Get SBOM artifact
+            # Get SBOM artifacts
             SBOM_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-sbom") | .id' || echo "")
             
             if [ -n "$SBOM_ARTIFACT_ID" ]; then
@@ -97,7 +127,8 @@ jobs:
             fi
           else
             echo "No previous successful workflow run found"
-            echo "digest=" >> $GITHUB_OUTPUT
+            echo "main-digest=" >> $GITHUB_OUTPUT
+            echo "debug-digest=" >> $GITHUB_OUTPUT
           fi
 
       - name: Build, Publish, and Sign with wolfi-act
@@ -118,57 +149,94 @@ jobs:
             # Create a directory for the SBOMs
             mkdir -p sbom-output
 
-            # Publish the multi-arch image using apko, which also generates an SBOM.
-            # The digest is captured for signing.
-            digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
-              --sbom-path=sbom-output)
+            echo "Building main image..."
+            # Publish the main multi-arch image using apko, which also generates an SBOM.
+            main_digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
+              --sbom-path=sbom-output/main)
 
-            # Sign the image digest using Cosign keyless signing.
-            cosign sign --yes "$digest"
+            echo "Building debug image..."
+            # Publish the debug multi-arch image using apko, which also generates an SBOM.
+            debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
+              --sbom-path=sbom-output/debug)
 
-            # Save the digest to a file that can be read outside the container
-            echo "$digest" > digest.txt
+            # Sign both image digests using Cosign keyless signing.
+            echo "Signing main image..."
+            cosign sign --yes "$main_digest"
 
-      - name: Extract digest
+            echo "Signing debug image..."
+            cosign sign --yes "$debug_digest"
+
+            # Save the digests to files that can be read outside the container
+            echo "$main_digest" > main-digest.txt
+            echo "$debug_digest" > debug-digest.txt
+
+      - name: Extract digests
         id: extract-digest
         run: |
-          # Read the digest from the file created in the container
-          DIGEST=$(cat digest.txt)
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "Extracted digest: $DIGEST"
+          # Read the digests from the files created in the container
+          MAIN_DIGEST=$(cat main-digest.txt)
+          DEBUG_DIGEST=$(cat debug-digest.txt)
+          echo "main-digest=$MAIN_DIGEST" >> $GITHUB_OUTPUT
+          echo "debug-digest=$DEBUG_DIGEST" >> $GITHUB_OUTPUT
+          echo "Extracted main digest: $MAIN_DIGEST"
+          echo "Extracted debug digest: $DEBUG_DIGEST"
 
       - name: Compare digests
         id: compare
         run: |
-          PREVIOUS="${{ steps.previous.outputs.digest }}"
-          CURRENT="${{ steps.extract-digest.outputs.digest }}"
+          PREVIOUS_MAIN="${{ steps.previous.outputs.main-digest }}"
+          CURRENT_MAIN="${{ steps.extract-digest.outputs.main-digest }}"
+          PREVIOUS_DEBUG="${{ steps.previous.outputs.debug-digest }}"
+          CURRENT_DEBUG="${{ steps.extract-digest.outputs.debug-digest }}"
 
-          echo "Previous digest: $PREVIOUS"
-          echo "Current digest: $CURRENT"
+          echo "Previous main digest: $PREVIOUS_MAIN"
+          echo "Current main digest: $CURRENT_MAIN"
+          echo "Previous debug digest: $PREVIOUS_DEBUG"
+          echo "Current debug digest: $CURRENT_DEBUG"
 
-          if [ -z "$PREVIOUS" ]; then
-            echo "No previous digest, marking as changed"
-            echo "has-changes=true" >> $GITHUB_OUTPUT
-          elif [ "$PREVIOUS" != "$CURRENT" ]; then
-            echo "Digests differ, marking as changed"
-            echo "has-changes=true" >> $GITHUB_OUTPUT
-          else
-            echo "Digests are identical, no changes"
-            echo "has-changes=false" >> $GITHUB_OUTPUT
+          # Check if either image has changes
+          MAIN_CHANGED=false
+          DEBUG_CHANGED=false
+
+          if [ -z "$PREVIOUS_MAIN" ] || [ "$PREVIOUS_MAIN" != "$CURRENT_MAIN" ]; then
+            echo "Main image has changes"
+            MAIN_CHANGED=true
           fi
 
-      - name: Save current digest
-        run: |
-          mkdir -p current-digest
-          echo "${{ steps.extract-digest.outputs.digest }}" > current-digest/digest.txt
-          # Clean up temporary file
-          rm -f digest.txt
+          if [ -z "$PREVIOUS_DEBUG" ] || [ "$PREVIOUS_DEBUG" != "$CURRENT_DEBUG" ]; then
+            echo "Debug image has changes"
+            DEBUG_CHANGED=true
+          fi
 
-      - name: Upload current digest artifact
+          if [ "$MAIN_CHANGED" = true ] || [ "$DEBUG_CHANGED" = true ]; then
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected in at least one image"
+          else
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            echo "No changes detected in either image"
+          fi
+
+      - name: Save current digests
+        run: |
+          mkdir -p current-main-digest current-debug-digest
+          echo "${{ steps.extract-digest.outputs.main-digest }}" > current-main-digest/digest.txt
+          echo "${{ steps.extract-digest.outputs.debug-digest }}" > current-debug-digest/digest.txt
+          # Clean up temporary files
+          rm -f main-digest.txt debug-digest.txt
+
+      - name: Upload current main digest artifact
         uses: actions/upload-artifact@v4
         with:
-          name: previous-digest
-          path: current-digest/digest.txt
+          name: previous-main-digest
+          path: current-main-digest/digest.txt
+          retention-days: 7
+          overwrite: true
+
+      - name: Upload current debug digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: previous-debug-digest
+          path: current-debug-digest/digest.txt
           retention-days: 7
           overwrite: true
 
@@ -193,6 +261,9 @@ jobs:
     permissions:
       contents: read
       packages: read
+    strategy:
+      matrix:
+        variant: [main, debug]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -212,7 +283,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create test Go application
+      - name: Set test configuration
+        id: test-config
+        run: |
+          if [ "${{ matrix.variant }}" = "main" ]; then
+            echo "base-image=${{ needs.build.outputs.main-digest }}" >> $GITHUB_OUTPUT
+            echo "expected-user=65532" >> $GITHUB_OUTPUT
+          else
+            echo "base-image=${{ needs.build.outputs.debug-digest }}" >> $GITHUB_OUTPUT
+            echo "expected-user=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create test Go application for ${{ matrix.variant }}
         run: |
           mkdir -p test-app
           cat > test-app/main.go << 'EOF'
@@ -225,7 +307,7 @@ jobs:
           )
 
           func main() {
-              fmt.Printf("Hello from base-image test!\n")
+              fmt.Printf("Hello from base-image test (${{ matrix.variant }})!\n")
               fmt.Printf("OS: %s\n", runtime.GOOS)
               fmt.Printf("Arch: %s\n", runtime.GOARCH)
               fmt.Printf("Go version: %s\n", runtime.Version())
@@ -237,9 +319,10 @@ jobs:
                   fmt.Printf("TEST_VAR: %s\n", testVar)
               }
 
-              // Test that we're running as non-root (65532)
-              if os.Getuid() != 65532 {
-                  fmt.Printf("ERROR: Expected UID 65532, got %d\n", os.Getuid())
+              // Test that we're running as expected user
+              expectedUser := ${{ steps.test-config.outputs.expected-user }}
+              if os.Getuid() != expectedUser {
+                  fmt.Printf("ERROR: Expected UID %d, got %d\n", expectedUser, os.Getuid())
                   os.Exit(1)
               }
 
@@ -247,7 +330,7 @@ jobs:
           }
           EOF
 
-      - name: Create test Dockerfile
+      - name: Create test Dockerfile for ${{ matrix.variant }}
         run: |
           cat > test-app/Dockerfile << 'EOF'
           # Declare build args at the top for global scope
@@ -264,16 +347,16 @@ jobs:
           # Runtime stage using our base image
           FROM $BASE_IMAGE
           COPY --from=builder /build/hello /hello
-          USER 65532:65532
+          # Keep the user as-is from the base image (nonroot for main, root for debug)
           ENTRYPOINT ["/hello"]
           EOF
 
-      - name: Test image on linux/amd64
+      - name: Test ${{ matrix.variant }} image on linux/amd64
         run: |
-          echo "Testing linux/amd64..."
+          echo "Testing ${{ matrix.variant }} on linux/amd64..."
           docker buildx build \
             --platform linux/amd64 \
-            --build-arg BASE_IMAGE=${{ needs.build.outputs.digest }} \
+            --build-arg BASE_IMAGE=${{ steps.test-config.outputs.base-image }} \
             --load \
             -t test-app:amd64 \
             test-app/
@@ -281,15 +364,15 @@ jobs:
           # Run the test
           docker run --rm \
             --platform linux/amd64 \
-            -e TEST_VAR="Hello from test" \
+            -e TEST_VAR="Hello from ${{ matrix.variant }} test" \
             test-app:amd64
 
-      - name: Test image on linux/arm64
+      - name: Test ${{ matrix.variant }} image on linux/arm64
         run: |
-          echo "Testing linux/arm64..."
+          echo "Testing ${{ matrix.variant }} on linux/arm64..."
           docker buildx build \
             --platform linux/arm64 \
-            --build-arg BASE_IMAGE=${{ needs.build.outputs.digest }} \
+            --build-arg BASE_IMAGE=${{ steps.test-config.outputs.base-image }} \
             --load \
             -t test-app:arm64 \
             test-app/
@@ -297,24 +380,13 @@ jobs:
           # Run the test (will use qemu if not on arm64 host)
           docker run --rm \
             --platform linux/arm64 \
-            -e TEST_VAR="Hello from test" \
+            -e TEST_VAR="Hello from ${{ matrix.variant }} test" \
             test-app:arm64
 
-      - name: Test multi-platform build
-        run: |
-          echo "Testing multi-platform build..."
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg BASE_IMAGE=${{ needs.build.outputs.digest }} \
-            -t test-app:multi \
-            test-app/
-
-          echo "Multi-platform build successful!"
-
-      - name: Security scan with Trivy
+      - name: Security scan with Trivy for ${{ matrix.variant }}
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ needs.build.outputs.digest }}
+          image-ref: ${{ steps.test-config.outputs.base-image }}
           format: "table"
           exit-code: "0" # Don't fail on vulnerabilities, just report
           ignore-unfixed: true
@@ -354,223 +426,7 @@ jobs:
           name: sbom
           path: sbom-output
 
-      - name: Get previous SBOM for comparison
-        id: get-previous-sbom
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Try to get the SBOM from the most recent successful workflow run
-          echo "Fetching previous SBOM for comparison..."
-
-          # Get the most recent successful workflow run (excluding current)
-          LAST_RUN=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/actions/workflows/build.yml/runs?status=success&per_page=2" \
-            --jq '.workflow_runs[1].id' || echo "")
-
-          if [ -n "$LAST_RUN" ]; then
-            echo "Found previous successful run: $LAST_RUN"
-            
-            # Get SBOM artifact from that run
-            SBOM_ARTIFACT_ID=$(gh api \
-              -H "Accept: application/vnd.github+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts" \
-              --jq '.artifacts[] | select(.name == "previous-sbom") | .id' || echo "")
-            
-            if [ -n "$SBOM_ARTIFACT_ID" ]; then
-              echo "Found previous SBOM artifact: $SBOM_ARTIFACT_ID"
-              
-              # Download the SBOM artifact
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$SBOM_ARTIFACT_ID/zip" \
-                > previous-sbom.zip
-              
-              # Extract previous SBOM
-              mkdir -p previous-sbom
-              unzip -q previous-sbom.zip -d previous-sbom/
-              echo "has-previous=true" >> $GITHUB_OUTPUT
-              rm -f previous-sbom.zip
-            else
-              echo "No previous SBOM artifact found"
-              echo "has-previous=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "No previous successful workflow run found"
-            echo "has-previous=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Compare SBOMs and generate changelog
-        id: compare-sboms
-        run: |
-          set -euo pipefail  # Exit on error, undefined variables, and pipe failures
-          export LC_ALL=C    # Ensure consistent sorting
-
-          echo "Comparing SBOMs..."
-
-          CHANGELOG=""
-
-          if [ "${{ steps.get-previous-sbom.outputs.has-previous }}" == "true" ]; then
-            # Find x86_64/amd64 SBOM files (exclude index SBOMs)
-            CURRENT_SBOM=$(find sbom-output \( -name "*x86_64*.json" -o -name "*amd64*.json" \) -type f | grep -v index | head -1)
-            PREVIOUS_SBOM=$(find previous-sbom \( -name "*x86_64*.json" -o -name "*amd64*.json" \) -type f | grep -v index | head -1)
-            
-            # Fallback: if no x86_64/amd64 SBOM found, try any non-index SBOM
-            if [ -z "$CURRENT_SBOM" ]; then
-              echo "No x86_64/amd64 SBOM found, falling back to any architecture..."
-              CURRENT_SBOM=$(find sbom-output -name "*.json" -type f | grep -v index | head -1)
-            fi
-            if [ -z "$PREVIOUS_SBOM" ]; then
-              echo "No previous x86_64/amd64 SBOM found, falling back to any architecture..."
-              PREVIOUS_SBOM=$(find previous-sbom -name "*.json" -type f | grep -v index | head -1)
-            fi
-
-            if [ -n "$CURRENT_SBOM" ] && [ -n "$PREVIOUS_SBOM" ]; then
-              echo "Current SBOM: $CURRENT_SBOM"
-              echo "Previous SBOM: $PREVIOUS_SBOM"
-              
-              # Verify we're comparing architecture-specific SBOMs
-              echo "=== SBOM Type Verification ==="
-              if grep -q '"description": "Multi-arch image index"' "$CURRENT_SBOM" 2>/dev/null; then
-                echo "WARNING: Current SBOM is an index SBOM, not architecture-specific!"
-              fi
-              if grep -q '"description": "Multi-arch image index"' "$PREVIOUS_SBOM" 2>/dev/null; then
-                echo "WARNING: Previous SBOM is an index SBOM, not architecture-specific!"
-              fi
-
-              # Debug: Show SBOM structure
-              echo "=== SBOM Structure Debug ==="
-              echo "Current SBOM sample:"
-              jq -r 'keys' "$CURRENT_SBOM" 2>/dev/null || echo "Failed to parse current SBOM"
-
-              # Extract package information from SBOMs
-              # This handles SPDX format SBOMs - filter for only Wolfi APK packages
-              CURRENT_PACKAGES=$(jq -r '.packages[] | select(.externalRefs[]? | .referenceLocator | startswith("pkg:apk/wolfi/")) | "\(.name)@\(.versionInfo)"' "$CURRENT_SBOM" 2>/dev/null | sort || echo "")
-              PREVIOUS_PACKAGES=$(jq -r '.packages[] | select(.externalRefs[]? | .referenceLocator | startswith("pkg:apk/wolfi/")) | "\(.name)@\(.versionInfo)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
-              
-              # If SPDX format didn't work, try CycloneDX format
-              if [ -z "$CURRENT_PACKAGES" ]; then
-                CURRENT_PACKAGES=$(jq -r '.components[]? | select(.name != null and .version != null) | "\(.name)@\(.version)"' "$CURRENT_SBOM" 2>/dev/null | sort || echo "")
-                PREVIOUS_PACKAGES=$(jq -r '.components[]? | select(.name != null and .version != null) | "\(.name)@\(.version)"' "$PREVIOUS_SBOM" 2>/dev/null | sort || echo "")
-              fi
-              
-              # Debug: Show extracted packages
-              echo "=== Package Extraction Debug ==="
-              echo "Current packages count: $(echo "$CURRENT_PACKAGES" | wc -l)"
-              echo "Previous packages count: $(echo "$PREVIOUS_PACKAGES" | wc -l)"
-
-              if [ -n "$CURRENT_PACKAGES" ] && [ -n "$PREVIOUS_PACKAGES" ]; then
-                # Save to temporary files for comparison
-                echo "$CURRENT_PACKAGES" > current_pkgs.txt
-                echo "$PREVIOUS_PACKAGES" > previous_pkgs.txt
-                
-                # Extract just package names (without versions) for both
-                cut -d'@' -f1 current_pkgs.txt | LC_ALL=C sort -u > current_names.txt
-                cut -d'@' -f1 previous_pkgs.txt | LC_ALL=C sort -u > previous_names.txt
-                
-                # Find added package names (new packages)
-                ADDED_NAMES=$(LC_ALL=C comm -13 previous_names.txt current_names.txt || true)
-                # Find removed package names
-                REMOVED_NAMES=$(LC_ALL=C comm -23 previous_names.txt current_names.txt || true)
-                # Find common package names (for version comparison)
-                COMMON_NAMES=$(LC_ALL=C comm -12 previous_names.txt current_names.txt || true)
-
-                # Get full package info for added/removed
-                ADDED=""
-                if [ -n "$ADDED_NAMES" ]; then
-                  while IFS= read -r name; do
-                    [ -z "$name" ] && continue
-                    # Escape special regex characters
-                    escaped_name=$(printf '%s\n' "$name" | sed 's/[[\.*^$()+?{|]/\\&/g')
-                    pkg=$(grep "^${escaped_name}@" current_pkgs.txt || true)
-                    if [ -n "$pkg" ]; then
-                      ADDED="${ADDED}${pkg}\n"
-                    fi
-                  done <<< "$ADDED_NAMES"
-                fi
-
-                REMOVED=""
-                if [ -n "$REMOVED_NAMES" ]; then
-                  while IFS= read -r name; do
-                    [ -z "$name" ] && continue
-                    # Escape special regex characters
-                    escaped_name=$(printf '%s\n' "$name" | sed 's/[[\.*^$()+?{|]/\\&/g')
-                    pkg=$(grep "^${escaped_name}@" previous_pkgs.txt || true)
-                    if [ -n "$pkg" ]; then
-                      REMOVED="${REMOVED}${pkg}\n"
-                    fi
-                  done <<< "$REMOVED_NAMES"
-                fi
-
-                # Check for version updates
-                UPDATED=""
-                if [ -n "$COMMON_NAMES" ]; then
-                  while IFS= read -r pkg_name; do
-                    [ -z "$pkg_name" ] && continue
-                    # Escape special regex characters
-                    escaped_name=$(printf '%s\n' "$pkg_name" | sed 's/[[\.*^$()+?{|]/\\&/g')
-                    OLD_FULL=$(grep "^${escaped_name}@" previous_pkgs.txt || echo "")
-                    NEW_FULL=$(grep "^${escaped_name}@" current_pkgs.txt || echo "")
-
-                    if [ -n "$OLD_FULL" ] && [ -n "$NEW_FULL" ] && [ "$OLD_FULL" != "$NEW_FULL" ]; then
-                      OLD_VER=$(echo "$OLD_FULL" | cut -d'@' -f2)
-                      NEW_VER=$(echo "$NEW_FULL" | cut -d'@' -f2)
-                      UPDATED="${UPDATED}${pkg_name}: ${OLD_VER} → ${NEW_VER}\n"
-                    fi
-                  done <<< "$COMMON_NAMES"
-                fi
-                
-                # Build changelog
-                if [ -n "$ADDED" ] || [ -n "$REMOVED" ] || [ -n "$UPDATED" ]; then
-                  CHANGELOG="### 📦 Package Changes\n\n"
-                  
-                  if [ -n "$ADDED" ]; then
-                    CHANGELOG="${CHANGELOG}#### ➕ Added Packages\n"
-                    printf '%b' "$ADDED" | while IFS= read -r pkg; do
-                      [ -n "$pkg" ] && CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
-                    done
-                    CHANGELOG="${CHANGELOG}\n"
-                  fi
-                  
-                  if [ -n "$UPDATED" ]; then
-                    CHANGELOG="${CHANGELOG}#### 🔄 Updated Packages\n"
-                    printf '%b' "$UPDATED" | while IFS= read -r line; do
-                      [ -n "$line" ] && CHANGELOG="${CHANGELOG}- \`${line}\`\n"
-                    done
-                    CHANGELOG="${CHANGELOG}\n"
-                  fi
-                  
-                  if [ -n "$REMOVED" ]; then
-                    CHANGELOG="${CHANGELOG}#### ➖ Removed Packages\n"
-                    printf '%b' "$REMOVED" | while IFS= read -r pkg; do
-                      [ -n "$pkg" ] && CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
-                    done
-                    CHANGELOG="${CHANGELOG}\n"
-                  fi
-                else
-                  CHANGELOG="### 📦 Package Changes\n\nNo package changes detected (metadata or rebuild only).\n\n"
-                fi
-                
-                # Clean up
-                rm -f current_pkgs.txt previous_pkgs.txt current_names.txt previous_names.txt
-              else
-                CHANGELOG="### 📦 Package Changes\n\nUnable to parse package information from SBOMs.\n\n"
-              fi
-            else
-              CHANGELOG="### 📦 Package Changes\n\nUnable to locate SBOM files for comparison.\n\n"
-            fi
-          else
-            CHANGELOG="### 📦 Package Changes\n\nThis is the first release or no previous SBOM available for comparison.\n\n"
-          fi
-
-          # Save changelog to file (GitHub Actions has issues with multiline outputs)
-          printf '%b' "$CHANGELOG" > changelog.txt
-          echo "changelog-generated=true" >> $GITHUB_OUTPUT
-
-      - name: Tag image with release version
+      - name: Tag images with release version using wolfi-act
         uses: wolfi-dev/wolfi-act@main
         env:
           OCI_HOST: ghcr.io
@@ -583,49 +439,60 @@ jobs:
             # Log in to the GitHub Container Registry
             echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
 
-            # Extract the digest without the registry prefix for crane
-            DIGEST="${{ needs.build.outputs.digest }}"
             TAG="${{ steps.tag.outputs.tag }}"
 
-            # Tag the existing image digest with the version tag
-            crane tag "$DIGEST" "$TAG"
+            # Tag main image with version and latest
+            crane tag "${{ needs.build.outputs.main-digest }}" "$TAG"
+            crane tag "${{ needs.build.outputs.main-digest }}" "latest"
 
-            echo "Successfully tagged image with $TAG"
+            # Tag debug image with version-debug and debug
+            crane tag "${{ needs.build.outputs.debug-digest }}" "$TAG-debug"
+            crane tag "${{ needs.build.outputs.debug-digest }}" "debug"
 
-      - name: Read changelog content
-        if: steps.compare-sboms.outputs.changelog-generated == 'true'
+            echo "Successfully tagged images:"
+            echo "Main: $TAG, latest"
+            echo "Debug: $TAG-debug, debug"
+
+      - name: Create release body
         run: |
-          # Read the changelog content for the release body
           cat > release-body.md << 'RELEASE_EOF'
           ## 🚀 Automated Release
 
-          This release was automatically generated due to changes detected in the container image build.
+          This release includes both the main distroless image and debug variant.
 
-          ### 📦 Container Image
+          ### 📦 Container Images
+
+          **Main Image (Production)**
           - **Image**: `ghcr.io/${{ github.repository }}:latest`
           - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
-          - **Digest**: `${{ needs.build.outputs.digest }}`
+          - **Digest**: `${{ needs.build.outputs.main-digest }}`
+          - **Usage**: Minimal distroless image for production use
 
-          ### 📋 What's Changed
-          RELEASE_EOF
-
-          # Append the changelog content
-          cat changelog.txt >> release-body.md
-
-          # Append the rest of the release body
-          cat >> release-body.md << 'RELEASE_EOF'
-          This release includes the latest security updates and package changes from the Wolfi base image.
+          **Debug Image (Development)**
+          - **Image**: `ghcr.io/${{ github.repository }}:debug`  
+          - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}-debug`
+          - **Digest**: `${{ needs.build.outputs.debug-digest }}`
+          - **Usage**: Debug image with shell and tools for troubleshooting
 
           ### 🔐 Verification
-          You can verify the image signature using:
+          You can verify both image signatures using:
           ```bash
-          cosign verify ${{ needs.build.outputs.digest }} \
+          # Main image
+          cosign verify ${{ needs.build.outputs.main-digest }} \
+            --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+
+          # Debug image  
+          cosign verify ${{ needs.build.outputs.debug-digest }} \
             --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
           ```
 
-          ### 📄 SBOM
-          The Software Bill of Materials (SBOM) is attached to this release.
+          ### 📄 Software Bill of Materials (SBOM)
+          SBOMs for both images are attached to this release.
+
+          ### ⚠️ Debug Image Warning
+          The debug image should **NEVER** be used in production as it includes debugging tools and runs as root.
           RELEASE_EOF
 
           # Save to environment variable
@@ -635,45 +502,7 @@ jobs:
             echo 'EOF'
           } >> $GITHUB_ENV
 
-      - name: Set default release body
-        if: steps.compare-sboms.outputs.changelog-generated != 'true'
-        run: |
-          # Set default release body when no changelog is generated
-          cat > release-body.md << 'RELEASE_EOF'
-          ## 🚀 Automated Release
-
-          This release was automatically generated due to changes detected in the container image build.
-
-          ### 📦 Container Image
-          - **Image**: `ghcr.io/${{ github.repository }}:latest`
-          - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
-          - **Digest**: `${{ needs.build.outputs.digest }}`
-
-          ### 📋 What's Changed
-          Unable to generate package changelog.
-
-          This release includes the latest security updates and package changes from the Wolfi base image.
-
-          ### 🔐 Verification
-          You can verify the image signature using:
-          ```bash
-          cosign verify ${{ needs.build.outputs.digest }} \
-            --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
-            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-          ```
-
-          ### 📄 SBOM
-          The Software Bill of Materials (SBOM) is attached to this release.
-          RELEASE_EOF
-
-          # Save to environment variable
-          {
-            echo 'RELEASE_BODY<<EOF'
-            cat release-body.md
-            echo 'EOF'
-          } >> $GITHUB_ENV
-
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
