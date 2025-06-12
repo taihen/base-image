@@ -6,7 +6,7 @@
 
 This repository builds, updates, and secures a multi-arch (currently only `x86_64` and `arm64`) **distroless `glibc` Docker base image**. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
 
-Images are available with both the `latest` tag and version tags (e.g., `v2024.01.15`) for reproducible builds.
+Images are available with both the `latest` tag and version tags (e.g., `v2025.06.13`) for reproducible builds.
 
 This project has been configured to use the Chainguard `apko` toolchain, which is the best-in-class method for building minimal, secure, and reproducible container images.
 
@@ -75,12 +75,12 @@ Use cases for the debug image:
 **Main Production Image:**
 
 - `ghcr.io/taihen/base-image:latest` - Latest production build
-- `ghcr.io/taihen/base-image:v2024.01.15` - Specific version tag
+- `ghcr.io/taihen/base-image:v2025.06.13` - Specific version tag
 
 **Debug Development Image:**
 
 - `ghcr.io/taihen/base-image:debug` - Latest debug build
-- `ghcr.io/taihen/base-image:v2024.01.15-debug` - Specific version debug tag
+- `ghcr.io/taihen/base-image:v2025.06.13-debug` - Specific version debug tag
 
 ### Building the Debug Image Locally
 
@@ -122,7 +122,7 @@ Together, apko and Wolfi provide a secure foundation for building container imag
 
 ## How to Use
 
-You can use this image as a secure and minimal base for your applications. You can use either the `latest` tag for the most recent version or a specific version tag (e.g., `v2024.01.15`) for reproducible builds.
+You can use this image as a secure and minimal base for your applications. You can use either the `latest` tag for the most recent version or a specific version tag (e.g., `v2025.06.13`) for reproducible builds.
 
 ### Example: Go (CGO-enabled)
 
@@ -137,7 +137,7 @@ RUN go build -o /hello main.go
 # Use latest tag
 FROM ghcr.io/taihen/base-image:latest
 # OR use a specific version for reproducible builds
-# FROM ghcr.io/taihen/base-image:v2024.01.15
+# FROM ghcr.io/taihen/base-image:v2025.06.13
 COPY --from=builder /hello /hello
 USER 65532:65532
 ENTRYPOINT ["/hello"]
@@ -228,8 +228,8 @@ The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow hand
 
 The workflow builds both image variants in parallel and applies the following tagging strategy:
 
-- **Production images**: Tagged with `latest` and version tags (e.g., `v2024.01.15`)
-- **Debug images**: Tagged with `debug` and version-debug tags (e.g., `v2024.01.15-debug`)
+- **Production images**: Tagged with `latest` and version tags (e.g., `v2025.06.13`)
+- **Debug images**: Tagged with `debug` and version-debug tags (e.g., `v2025.06.13-debug`)
 
 ## Automatic Release System
 
@@ -246,22 +246,35 @@ This repository includes an intelligent automatic release system that creates Gi
    - The image digest for verification
    - The SBOM (Software Bill of Materials) as an attachment
    - Instructions for verifying the image signature
+   - **Detailed package changelog** showing what changed since the last release
+
+### Package Change Tracking
+
+The release system automatically compares the SBOMs from the current and previous releases to generate a detailed changelog that shows:
+
+- **Added packages**: New packages introduced in this release
+- **Updated packages**: Packages with version changes
+- **Removed packages**: Packages that were removed
+- **Summary statistics**: Total package counts and change counts for both images
+
+If no package changes are detected (e.g., only metadata or rebuild changes), the release notes will indicate "No package changes detected (metadata or rebuild only)".
 
 ### Benefits
 
 - **Meaningful Releases**: Only creates releases when there are actual changes
+- **Transparent Changes**: Every release documents exactly what packages changed
 - **Audit Trail**: Each release documents what changed and when
 - **Resource Efficiency**: Avoids cluttering the releases page with identical builds
 - **Supply Chain Security**: Every release includes verification instructions and SBOM
 
 ### Release Naming
 
-Releases are automatically tagged with a date-based version format: `vYYYY.MM.DD` (e.g., `v2024.01.15`). If multiple releases occur on the same day, a counter is appended (e.g., `v2024.01.15.1`).
+Releases are automatically tagged with a date-based version format: `vYYYY.MM.DD` (e.g., `v2025.06.13`). If multiple releases occur on the same day, a counter is appended (e.g., `v2025.06.13.1`).
 
 Each release creates:
 
 - A GitHub release with the version tag
-- A Docker image tagged with the same version (e.g., `ghcr.io/taihen/base-image:v2024.01.15`)
+- A Docker image tagged with the same version (e.g., `ghcr.io/taihen/base-image:v2025.06.13`)
 - The `latest` tag is also updated to point to the newest release
 
 ## Automated Testing
