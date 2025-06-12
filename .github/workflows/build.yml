@@ -793,6 +793,12 @@ jobs:
           # Read the SBOM changelog
           SBOM_CHANGELOG=$(<sbom-changelog.md)
 
+          # Set variables from GitHub Actions context
+          REPO="${{ github.repository }}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          MAIN_DIGEST="${{ needs.build.outputs.main-digest }}"
+          DEBUG_DIGEST="${{ needs.build.outputs.debug-digest }}"
+
           cat > release-body.md << RELEASE_EOF
           ## 🚀 Automated Release
 
@@ -803,28 +809,26 @@ jobs:
           ### 📦 Container Images
 
           **Main Image (Production)**
-          - **Image**: `ghcr.io/${{ github.repository }}:latest`
-          - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}`
-          - **Digest**: `${{ needs.build.outputs.main-digest }}`
-          - **Usage**: Minimal distroless image for production use
+          - **Image**: \`ghcr.io/${REPO}:latest\`
+          - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}\`
+          - **Digest**: \`${MAIN_DIGEST}\`
 
           **Debug Image (Development)**
-          - **Image**: `ghcr.io/${{ github.repository }}:debug`  
-          - **Tagged Version**: `ghcr.io/${{ github.repository }}:${{ steps.tag.outputs.tag }}-debug`
-          - **Digest**: `${{ needs.build.outputs.debug-digest }}`
-          - **Usage**: Debug image with shell and tools for troubleshooting
+          - **Image**: \`ghcr.io/${REPO}:debug\`
+          - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}-debug\`
+          - **Digest**: \`${DEBUG_DIGEST}\`
 
           ### 🔐 Verification
           You can verify both image signatures using:
           \`\`\`bash
           # Main image
-          cosign verify ${{ needs.build.outputs.main-digest }} \
-            --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+          cosign verify ${MAIN_DIGEST} \\
+            --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 
           # Debug image  
-          cosign verify ${{ needs.build.outputs.debug-digest }} \
-            --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
+          cosign verify ${DEBUG_DIGEST} \\
+            --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
           \`\`\`
 
