@@ -406,6 +406,9 @@ jobs:
       - name: Compare SBOMs and generate changelog
         id: compare-sboms
         run: |
+          set -euo pipefail  # Exit on error, undefined variables, and pipe failures
+          export LC_ALL=C    # Ensure consistent sorting
+
           echo "Comparing SBOMs..."
 
           CHANGELOG=""
@@ -465,49 +468,60 @@ jobs:
                 echo "$PREVIOUS_PACKAGES" > previous_pkgs.txt
                 
                 # Extract just package names (without versions) for both
-                cut -d'@' -f1 current_pkgs.txt | sort -u > current_names.txt
-                cut -d'@' -f1 previous_pkgs.txt | sort -u > previous_names.txt
+                cut -d'@' -f1 current_pkgs.txt | LC_ALL=C sort -u > current_names.txt
+                cut -d'@' -f1 previous_pkgs.txt | LC_ALL=C sort -u > previous_names.txt
                 
                 # Find added package names (new packages)
-                ADDED_NAMES=$(comm -13 previous_names.txt current_names.txt)
+                ADDED_NAMES=$(LC_ALL=C comm -13 previous_names.txt current_names.txt || true)
                 # Find removed package names
-                REMOVED_NAMES=$(comm -23 previous_names.txt current_names.txt)
+                REMOVED_NAMES=$(LC_ALL=C comm -23 previous_names.txt current_names.txt || true)
                 # Find common package names (for version comparison)
-                COMMON_NAMES=$(comm -12 previous_names.txt current_names.txt)
+                COMMON_NAMES=$(LC_ALL=C comm -12 previous_names.txt current_names.txt || true)
 
                 # Get full package info for added/removed
                 ADDED=""
                 if [ -n "$ADDED_NAMES" ]; then
-                  for name in $ADDED_NAMES; do
-                    pkg=$(grep "^${name}@" current_pkgs.txt || true)
+                  while IFS= read -r name; do
+                    [ -z "$name" ] && continue
+                    # Escape special regex characters
+                    escaped_name=$(printf '%s\n' "$name" | sed 's/[[\.*^$()+?{|]/\\&/g')
+                    pkg=$(grep "^${escaped_name}@" current_pkgs.txt || true)
                     if [ -n "$pkg" ]; then
                       ADDED="${ADDED}${pkg}\n"
                     fi
-                  done
+                  done <<< "$ADDED_NAMES"
                 fi
 
                 REMOVED=""
                 if [ -n "$REMOVED_NAMES" ]; then
-                  for name in $REMOVED_NAMES; do
-                    pkg=$(grep "^${name}@" previous_pkgs.txt || true)
+                  while IFS= read -r name; do
+                    [ -z "$name" ] && continue
+                    # Escape special regex characters
+                    escaped_name=$(printf '%s\n' "$name" | sed 's/[[\.*^$()+?{|]/\\&/g')
+                    pkg=$(grep "^${escaped_name}@" previous_pkgs.txt || true)
                     if [ -n "$pkg" ]; then
                       REMOVED="${REMOVED}${pkg}\n"
                     fi
-                  done
+                  done <<< "$REMOVED_NAMES"
                 fi
 
                 # Check for version updates
                 UPDATED=""
-                for pkg_name in $COMMON_NAMES; do
-                  OLD_FULL=$(grep "^${pkg_name}@" previous_pkgs.txt || echo "")
-                  NEW_FULL=$(grep "^${pkg_name}@" current_pkgs.txt || echo "")
+                if [ -n "$COMMON_NAMES" ]; then
+                  while IFS= read -r pkg_name; do
+                    [ -z "$pkg_name" ] && continue
+                    # Escape special regex characters
+                    escaped_name=$(printf '%s\n' "$pkg_name" | sed 's/[[\.*^$()+?{|]/\\&/g')
+                    OLD_FULL=$(grep "^${escaped_name}@" previous_pkgs.txt || echo "")
+                    NEW_FULL=$(grep "^${escaped_name}@" current_pkgs.txt || echo "")
 
-                  if [ -n "$OLD_FULL" ] && [ -n "$NEW_FULL" ] && [ "$OLD_FULL" != "$NEW_FULL" ]; then
-                    OLD_VER=$(echo "$OLD_FULL" | cut -d'@' -f2)
-                    NEW_VER=$(echo "$NEW_FULL" | cut -d'@' -f2)
-                    UPDATED="${UPDATED}${pkg_name}: ${OLD_VER} → ${NEW_VER}\n"
-                  fi
-                done
+                    if [ -n "$OLD_FULL" ] && [ -n "$NEW_FULL" ] && [ "$OLD_FULL" != "$NEW_FULL" ]; then
+                      OLD_VER=$(echo "$OLD_FULL" | cut -d'@' -f2)
+                      NEW_VER=$(echo "$NEW_FULL" | cut -d'@' -f2)
+                      UPDATED="${UPDATED}${pkg_name}: ${OLD_VER} → ${NEW_VER}\n"
+                    fi
+                  done <<< "$COMMON_NAMES"
+                fi
                 
                 # Build changelog
                 if [ -n "$ADDED" ] || [ -n "$REMOVED" ] || [ -n "$UPDATED" ]; then
@@ -515,7 +529,7 @@ jobs:
                   
                   if [ -n "$ADDED" ]; then
                     CHANGELOG="${CHANGELOG}#### ➕ Added Packages\n"
-                    echo -e "$ADDED" | while read -r pkg; do
+                    printf '%b' "$ADDED" | while IFS= read -r pkg; do
                       [ -n "$pkg" ] && CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
                     done
                     CHANGELOG="${CHANGELOG}\n"
@@ -523,7 +537,7 @@ jobs:
                   
                   if [ -n "$UPDATED" ]; then
                     CHANGELOG="${CHANGELOG}#### 🔄 Updated Packages\n"
-                    echo -e "$UPDATED" | while read -r line; do
+                    printf '%b' "$UPDATED" | while IFS= read -r line; do
                       [ -n "$line" ] && CHANGELOG="${CHANGELOG}- \`${line}\`\n"
                     done
                     CHANGELOG="${CHANGELOG}\n"
@@ -531,7 +545,7 @@ jobs:
                   
                   if [ -n "$REMOVED" ]; then
                     CHANGELOG="${CHANGELOG}#### ➖ Removed Packages\n"
-                    echo -e "$REMOVED" | while read -r pkg; do
+                    printf '%b' "$REMOVED" | while IFS= read -r pkg; do
                       [ -n "$pkg" ] && CHANGELOG="${CHANGELOG}- \`${pkg}\`\n"
                     done
                     CHANGELOG="${CHANGELOG}\n"
@@ -552,8 +566,8 @@ jobs:
             CHANGELOG="### 📦 Package Changes\n\nThis is the first release or no previous SBOM available for comparison.\n\n"
           fi
 
-                    # Save changelog to file (GitHub Actions has issues with multiline outputs)
-          echo -e "$CHANGELOG" > changelog.txt
+          # Save changelog to file (GitHub Actions has issues with multiline outputs)
+          printf '%b' "$CHANGELOG" > changelog.txt
           echo "changelog-generated=true" >> $GITHUB_OUTPUT
 
       - name: Tag image with release version
