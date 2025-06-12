@@ -743,12 +743,7 @@ jobs:
               print(changelog)
               print("=" * 50)
               
-              # Set output for GitHub Actions
-              # GitHub Actions has a limit on output size, so we'll save to env file
-              with open(os.environ['GITHUB_ENV'], 'a') as f:
-                  # Escape the changelog for GitHub Actions
-                  escaped_changelog = changelog.replace('%', '%25').replace('\n', '%0A').replace('\r', '%0D')
-                  f.write(f"SBOM_CHANGELOG<<EOF\n{changelog}\nEOF\n")
+              # Don't write to GITHUB_ENV as it causes issues with wolfi-act
 
           if __name__ == '__main__':
               main()
@@ -795,12 +790,15 @@ jobs:
 
       - name: Create release body
         run: |
-          cat > release-body.md << 'RELEASE_EOF'
+          # Read the SBOM changelog
+          SBOM_CHANGELOG=$(<sbom-changelog.md)
+
+          cat > release-body.md << RELEASE_EOF
           ## 🚀 Automated Release
 
           This release includes both the main distroless image and debug variant.
 
-          ${{ env.SBOM_CHANGELOG }}
+          $SBOM_CHANGELOG
 
           ### 📦 Container Images
 
@@ -818,7 +816,7 @@ jobs:
 
           ### 🔐 Verification
           You can verify both image signatures using:
-          ```bash
+          \`\`\`bash
           # Main image
           cosign verify ${{ needs.build.outputs.main-digest }} \
             --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
@@ -828,7 +826,7 @@ jobs:
           cosign verify ${{ needs.build.outputs.debug-digest }} \
             --certificate-identity=https://github.com/${{ github.repository }}/.github/workflows/build.yml@refs/heads/main \
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-          ```
+          \`\`\`
 
           ### 📄 Software Bill of Materials (SBOM)
           SBOMs for both images are attached to this release.
@@ -837,19 +835,12 @@ jobs:
           The debug image should **NEVER** be used in production as it includes debugging tools and runs as root.
           RELEASE_EOF
 
-          # Save to environment variable
-          {
-            echo 'RELEASE_BODY<<EOF'
-            cat release-body.md
-            echo 'EOF'
-          } >> $GITHUB_ENV
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Release ${{ steps.tag.outputs.tag }}
-          body: ${{ env.RELEASE_BODY }}
+          body_path: release-body.md
           files: |
             sbom-output/*
             sbom-changelog.md
