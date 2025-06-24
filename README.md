@@ -303,3 +303,7 @@ If any test fails:
 - The next scheduled run will retry if the issues are resolved
 
 This ensures that only fully functional and tested images are released.
+
+## Projects using it
+
+- [MCP RIPEStat](https://github.com/taihen/mcp-ripestat)
