@@ -581,6 +581,8 @@ jobs:
           def parse_cyclonedx_sbom(sbom):
               """Extract package information from a single CycloneDX SBOM."""
               packages = {}
+              print(f"Parsing SBOM: {sbom.get('metadata', {}).get('component', {}).get('name', 'N/A')}")
+              print(f"SBOM has 'components' key: {'components' in sbom}")
               if sbom and 'components' in sbom:
                   for component in sbom['components']:
                       name = component.get('name', 'unknown')
