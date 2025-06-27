@@ -11,6 +11,5 @@ accounts:
 archs:
   - x86_64
   - aarch64
-  - armv7
 entrypoint:
   command: /bin/sh -l
