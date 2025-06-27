@@ -521,7 +521,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: sbom
-          path: sbom-output
+
+      - name: Move SBOMs to expected directory
+        run: |
+          mkdir -p sbom-output
+          mv *.json sbom-output/
+
+      - name: List downloaded SBOMs for debugging
+        run: ls -R sbom-output
 
       - name: Compare SBOMs and Generate Changelog
         id: sbom-diff
