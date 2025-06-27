@@ -522,13 +522,15 @@ jobs:
         with:
           name: sbom
 
-      - name: Move SBOMs to expected directory
+      - name: Prepare SBOM directory for comparison
         run: |
-          mkdir -p sbom-output
-          mv *.json sbom-output/
-
-      - name: List downloaded SBOMs for debugging
-        run: ls -R sbom-output
+          echo "Preparing sbom-output directory..."
+          # The download-artifact action creates a directory named after the artifact.
+          # We rename it to sbom-output for the comparison script.
+          rm -rf sbom-output
+          mv sbom sbom-output
+          echo "Contents of sbom-output:"
+          ls -R sbom-output
 
       - name: Compare SBOMs and Generate Changelog
         id: sbom-diff
