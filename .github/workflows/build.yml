@@ -581,17 +581,13 @@ jobs:
           def parse_cyclonedx_sbom(sbom):
               """Extract package information from a single CycloneDX SBOM."""
               packages = {}
-              print(f"Parsing SBOM: {sbom.get('metadata', {}).get('component', {}).get('name', 'N/A')}")
-              print(f"SBOM has 'components' key: {'components' in sbom}")
-              if sbom and 'components' in sbom:
-                  for component in sbom['components']:
+              if sbom and 'packages' in sbom:
+                  for component in sbom['packages']:
                       name = component.get('name', 'unknown')
-                      version = component.get('version', 'unknown')
+                      version = component.get('versionInfo', 'unknown')
                       license_str = 'unknown'
-                      if 'licenses' in component:
-                          licenses = [lic['license']['id'] for lic in component['licenses'] if 'license' in lic and 'id' in lic['license']]
-                          if licenses:
-                              license_str = ', '.join(licenses)
+                      if 'licenseDeclared' in component:
+                          license_str = component['licenseDeclared']
                       packages[name] = {'version': version, 'license': license_str}
               return packages
 
