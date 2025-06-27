@@ -2,8 +2,6 @@
 # It is inspired by the principles of Google Distroless and Chainguard Images.
 # For more information on apko, see: https://github.com/chainguard-dev/apko
 #
-# Using Chainguard's public Wolfi package repository.
-#
 # A minimal set of packages for a glibc-based "distroless" image:
 #
 # - wolfi-baselayout - is the basic layout of the container filesystem, sets
@@ -16,7 +14,6 @@
 # - ca-certificates-bundle - these are the cert chains for ssl connections
 # - tzdata - is the data with which timezones are used by the OS
 # - glibc - is the libc library for the OS
-
 contents:
   repositories: ['https://packages.wolfi.dev/os']
   keyring: ['https://packages.wolfi.dev/os/wolfi-signing.rsa.pub']
