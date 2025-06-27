@@ -37,6 +37,7 @@ accounts:
 archs:
   - x86_64
   - aarch64
+  - armv7
 
 # A distroless image has no shell or entrypoint.
 # The application using this base image will provide its own entrypoint.
