@@ -521,14 +521,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: sbom
+          path: sbom-output
 
-      - name: Prepare SBOM directory for comparison
+      - name: List downloaded SBOMs for debugging
         run: |
-          echo "Preparing sbom-output directory..."
-          # The download-artifact action creates a directory named after the artifact.
-          # We rename it to sbom-output for the comparison script.
-          rm -rf sbom-output
-          mv sbom sbom-output
           echo "Contents of sbom-output:"
           ls -R sbom-output
 
