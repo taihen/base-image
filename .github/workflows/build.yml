@@ -699,13 +699,16 @@ jobs:
                           filepath = os.path.join(root, file)
                           with open(filepath, 'r') as f:
                               try:
-                                  sbom = json.load(f)
-                                  packages = parse_cyclonedx_sbom(sbom)
+                                  sbom_content = json.load(f)
+                                  # Parse the SBOM content to extract packages
+                                  packages = parse_cyclonedx_sbom(sbom_content)
+                                  
                                   if file.startswith('debug_'):
                                       current_debug_packages.update(packages)
                                   elif file.startswith('main_'):
                                       current_main_packages.update(packages)
                               except json.JSONDecodeError:
+                                  print(f"Warning: Could not decode JSON from {filepath}")
                                   continue
 
               if not current_main_packages:
