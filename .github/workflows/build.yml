@@ -595,8 +595,7 @@ jobs:
                       'added': [(name, info['version'], info['license']) for name, info in new_packages.items()],
                       'removed': [],
                       'updated': [],
-                      'total_packages
-                      ': len(new_packages),
+                      'total_packages': len(new_packages),
                       'is_first_release': True
                   }
 
