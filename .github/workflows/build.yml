@@ -186,39 +186,135 @@ jobs:
           echo "Extracted main digest: $MAIN_DIGEST"
           echo "Extracted debug digest: $DEBUG_DIGEST"
 
-      - name: Compare digests
+      - name: Compare SBOMs
+        id: sbom-compare
+        run: |
+          cat > sbom_comparator.py << 'EOF'
+          import json
+          import os
+          import sys
+
+          def get_sbom_files(directory):
+              main_sbom_path = None
+              debug_sbom_path = None
+              if not os.path.exists(directory):
+                  print(f"Directory not found: {directory}")
+                  return None, None
+              for root, _, files in os.walk(directory):
+                  for file in files:
+                      if file.endswith('.json'):
+                          filepath = os.path.join(root, file)
+                          with open(filepath, 'r') as f:
+                              try:
+                                  content = json.load(f)
+                                  if 'metadata' in content and 'component' in content['metadata']:
+                                      component_name = content['metadata']['component'].get('name', '')
+                                      if 'debug' in component_name:
+                                          debug_sbom_path = filepath
+                                      elif main_sbom_path is None:
+                                          main_sbom_path = filepath
+                                  elif main_sbom_path is None: # Fallback
+                                      main_sbom_path = filepath
+                              except json.JSONDecodeError:
+                                  print(f"Warning: Could not decode JSON from {filepath}")
+                                  continue
+              return main_sbom_path, debug_sbom_path
+
+          def parse_sbom(path):
+              packages = {}
+              if path is None or not os.path.exists(path):
+                  return packages
+              with open(path, 'r') as f:
+                  try:
+                      sbom = json.load(f)
+                      if 'components' in sbom:
+                          for component in sbom['components']:
+                              name = component.get('name', 'unknown')
+                              version = component.get('version', 'unknown')
+                              packages[name] = version
+                  except json.JSONDecodeError:
+                      print(f"Warning: Could not decode JSON from {path}")
+              return packages
+
+          def compare_packages(old_pkgs, new_pkgs):
+              if not old_pkgs and not new_pkgs:
+                  return False # Both are empty
+              if not old_pkgs and new_pkgs:
+                  print("No previous SBOM found. Assuming changes.")
+                  return True # First run
+              if old_pkgs == new_pkgs:
+                  return False # No changes
+              return True # Changes detected
+
+          def main():
+              prev_main_path, prev_debug_path = get_sbom_files('previous-sbom')
+              curr_main_path, curr_debug_path = get_sbom_files('sbom-output')
+
+              print(f"Previous SBOMs: main={prev_main_path}, debug={prev_debug_path}")
+              print(f"Current SBOMs: main={curr_main_path}, debug={curr_debug_path}")
+
+              prev_main_pkgs = parse_sbom(prev_main_path)
+              curr_main_pkgs = parse_sbom(curr_main_path)
+
+              prev_debug_pkgs = parse_sbom(prev_debug_path)
+              curr_debug_pkgs = parse_sbom(curr_debug_path)
+
+              main_changed = compare_packages(prev_main_pkgs, curr_main_pkgs)
+              if main_changed:
+                  print("Main SBOM has changes.")
+
+              debug_changed = compare_packages(prev_debug_pkgs, curr_debug_pkgs)
+              if debug_changed:
+                  print("Debug SBOM has changes.")
+
+              if main_changed or debug_changed:
+                  print("Changes detected in SBOMs.")
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('sbom-changes=true\n')
+              else:
+                  print("No changes detected in SBOMs.")
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                      f.write('sbom-changes=false\n')
+
+          if __name__ == "__main__":
+              main()
+          EOF
+
+          python3 sbom_comparator.py
+
+      - name: Compare digests and SBOMs
         id: compare
         run: |
           PREVIOUS_MAIN="${{ steps.previous.outputs.main-digest }}"
           CURRENT_MAIN="${{ steps.extract-digest.outputs.main-digest }}"
           PREVIOUS_DEBUG="${{ steps.previous.outputs.debug-digest }}"
           CURRENT_DEBUG="${{ steps.extract-digest.outputs.debug-digest }}"
+          SBOM_CHANGES="${{ steps.sbom-compare.outputs.sbom-changes }}"
 
           echo "Previous main digest: $PREVIOUS_MAIN"
           echo "Current main digest: $CURRENT_MAIN"
           echo "Previous debug digest: $PREVIOUS_DEBUG"
           echo "Current debug digest: $CURRENT_DEBUG"
+          echo "SBOM changes: $SBOM_CHANGES"
 
-          # Check if either image has changes
-          MAIN_CHANGED=false
-          DEBUG_CHANGED=false
-
+          MAIN_DIGEST_CHANGED=false
           if [ -z "$PREVIOUS_MAIN" ] || [ "$PREVIOUS_MAIN" != "$CURRENT_MAIN" ]; then
-            echo "Main image has changes"
-            MAIN_CHANGED=true
+            echo "Main image has changes (digest)"
+            MAIN_DIGEST_CHANGED=true
           fi
 
+          DEBUG_DIGEST_CHANGED=false
           if [ -z "$PREVIOUS_DEBUG" ] || [ "$PREVIOUS_DEBUG" != "$CURRENT_DEBUG" ]; then
-            echo "Debug image has changes"
-            DEBUG_CHANGED=true
+            echo "Debug image has changes (digest)"
+            DEBUG_DIGEST_CHANGED=true
           fi
 
-          if [ "$MAIN_CHANGED" = true ] || [ "$DEBUG_CHANGED" = true ]; then
+          if [ "$MAIN_DIGEST_CHANGED" = true ] || [ "$DEBUG_DIGEST_CHANGED" = true ] || [ "$SBOM_CHANGES" = true ]; then
             echo "has-changes=true" >> $GITHUB_OUTPUT
-            echo "Changes detected in at least one image"
+            echo "Changes detected"
           else
             echo "has-changes=false" >> $GITHUB_OUTPUT
-            echo "No changes detected in either image"
+            echo "No changes detected"
           fi
 
       - name: Save current digests
@@ -469,41 +565,21 @@ jobs:
               debug_sbom = None
               
               for asset in release['assets']:
-                  if 'sbom' in asset['name'].lower():
-                      # Download the asset
+                  if 'sbom' in asset['name'].lower() and asset['name'].endswith('.json'):
                       download_url = asset['browser_download_url']
                       asset_response = requests.get(download_url, headers=headers)
-                      
-                      # Extract based on filename patterns
-                      content = asset_response.content
-                      if asset['name'].endswith('.json'):
-                          # Direct JSON file
-                          try:
-                              data = json.loads(content)
-                              if 'debug' in asset['name'].lower():
+                      try:
+                          data = json.loads(asset_response.content)
+                          # Use metadata to differentiate between main and debug SBOMs
+                          if 'metadata' in data and 'component' in data['metadata']:
+                              component_name = data['metadata']['component'].get('name', '')
+                              if 'debug' in component_name:
                                   debug_sbom = data
                               else:
                                   main_sbom = data
-                          except:
-                              pass
-                      elif asset['name'].endswith('.zip'):
-                          # ZIP file containing SBOMs
-                          try:
-                              with zipfile.ZipFile(io.BytesIO(content)) as z:
-                                  for filename in z.namelist():
-                                      if filename.endswith('.json'):
-                                          data = json.loads(z.read(filename))
-                                          # Try to determine if it's main or debug from filename or content
-                                          if 'debug' in filename.lower():
-                                              debug_sbom = data
-                                          else:
-                                              # Check if already assigned, if not assign
-                                              if main_sbom is None:
-                                                  main_sbom = data
-                                              elif debug_sbom is None:
-                                                  debug_sbom = data
-                          except:
-                              pass
+                      except json.JSONDecodeError:
+                          print(f"Warning: Could not decode JSON from asset {asset['name']}")
+                          continue
               
               return main_sbom, debug_sbom
 
@@ -511,38 +587,30 @@ jobs:
               """Extract package information from CycloneDX SBOM."""
               packages = {}
               
-              if 'components' in sbom:
+              if sbom and 'components' in sbom:
                   for component in sbom['components']:
                       name = component.get('name', 'unknown')
                       version = component.get('version', 'unknown')
                       
-                      # Extract license
                       license_str = 'unknown'
                       if 'licenses' in component:
                           licenses = []
                           for lic in component['licenses']:
-                              if 'license' in lic:
-                                  if 'id' in lic['license']:
-                                      licenses.append(lic['license']['id'])
-                                  elif 'name' in lic['license']:
-                                      licenses.append(lic['license']['name'])
+                              if 'license' in lic and 'id' in lic['license']:
+                                  licenses.append(lic['license']['id'])
                           if licenses:
                               license_str = ', '.join(licenses)
                       
-                      packages[name] = {
-                          'version': version,
-                          'license': license_str
-                      }
+                      packages[name] = {'version': version, 'license': license_str}
               
               return packages
 
           def compare_sboms(old_sbom, new_sbom):
               """Compare two SBOMs and return differences."""
               if old_sbom is None:
-                  # First release
-                  new_packages = parse_cyclonedx_sbom(new_sbom) if new_sbom else {}
+                  new_packages = parse_cyclonedx_sbom(new_sbom)
                   return {
-                      'added': list(new_packages.keys()),
+                      'added': [(name, info['version'], info['license']) for name, info in new_packages.items()],
                       'removed': [],
                       'updated': [],
                       'total_packages': len(new_packages),
@@ -556,14 +624,12 @@ jobs:
               removed = []
               updated = []
               
-              # Find added and updated packages
               for name, info in new_packages.items():
                   if name not in old_packages:
                       added.append((name, info['version'], info['license']))
                   elif old_packages[name]['version'] != info['version']:
                       updated.append((name, old_packages[name]['version'], info['version']))
               
-              # Find removed packages
               for name, info in old_packages.items():
                   if name not in new_packages:
                       removed.append((name, info['version']))
@@ -580,7 +646,6 @@ jobs:
               """Generate markdown changelog."""
               changelog = []
               
-              # Check if this is first release
               if main_changes.get('is_first_release', False):
                   changelog.append("### 🎉 Initial Release\n")
                   changelog.append("This is the first release with SBOM tracking.")
@@ -588,7 +653,6 @@ jobs:
                   changelog.append(f"- **Debug Image**: {debug_changes['total_packages']} packages")
                   return '\n'.join(changelog)
               
-              # Check if there are any changes
               has_main_changes = bool(main_changes['added'] or main_changes['removed'] or main_changes['updated'])
               has_debug_changes = bool(debug_changes['added'] or debug_changes['removed'] or debug_changes['updated'])
               
@@ -597,69 +661,45 @@ jobs:
                   changelog.append("ℹ️ **No package changes detected** (metadata or rebuild only)")
                   return '\n'.join(changelog)
               
-              # Generate detailed changelog
               changelog.append("### 📦 Package Changes\n")
               
-              # Production image changes
               if has_main_changes:
                   changelog.append("#### Production Image\n")
-                  
                   if main_changes['updated']:
                       changelog.append(f"**🔄 Updated ({len(main_changes['updated'])} packages)**")
                       for name, old_ver, new_ver in sorted(main_changes['updated']):
                           changelog.append(f"- `{name}`: {old_ver} → {new_ver}")
-                      changelog.append("")
-                  
                   if main_changes['added']:
                       changelog.append(f"**➕ Added ({len(main_changes['added'])} packages)**")
                       for name, version, license in sorted(main_changes['added']):
                           changelog.append(f"- `{name}` v{version} (License: {license})")
-                      changelog.append("")
-                  
                   if main_changes['removed']:
                       changelog.append(f"**➖ Removed ({len(main_changes['removed'])} packages)**")
                       for name, version in sorted(main_changes['removed']):
                           changelog.append(f"- `{name}` v{version}")
-                      changelog.append("")
               else:
-                  changelog.append("#### Production Image\n")
-                  changelog.append("No changes\n")
+                  changelog.append("#### Production Image\nNo changes\n")
               
-              # Debug image changes
               if has_debug_changes:
-                  changelog.append("#### Debug Image\n")
-                  
+                  changelog.append("\n#### Debug Image\n")
                   if debug_changes['updated']:
                       changelog.append(f"**🔄 Updated ({len(debug_changes['updated'])} packages)**")
                       for name, old_ver, new_ver in sorted(debug_changes['updated']):
                           changelog.append(f"- `{name}`: {old_ver} → {new_ver}")
-                      changelog.append("")
-                  
                   if debug_changes['added']:
                       changelog.append(f"**➕ Added ({len(debug_changes['added'])} packages)**")
                       for name, version, license in sorted(debug_changes['added']):
                           changelog.append(f"- `{name}` v{version} (License: {license})")
-                      changelog.append("")
-                  
                   if debug_changes['removed']:
                       changelog.append(f"**➖ Removed ({len(debug_changes['removed'])} packages)**")
                       for name, version in sorted(debug_changes['removed']):
                           changelog.append(f"- `{name}` v{version}")
-                      changelog.append("")
               else:
-                  changelog.append("#### Debug Image\n")
-                  changelog.append("No changes\n")
+                  changelog.append("\n#### Debug Image\nNo changes\n")
               
-              # Summary
-              changelog.append("### 📊 Summary")
-              changelog.append(f"- **Production**: {main_changes['total_packages']} total packages, "
-                             f"{len(main_changes['added'])} added, "
-                             f"{len(main_changes['updated'])} updated, "
-                             f"{len(main_changes['removed'])} removed")
-              changelog.append(f"- **Debug**: {debug_changes['total_packages']} total packages, "
-                             f"{len(debug_changes['added'])} added, "
-                             f"{len(debug_changes['updated'])} updated, "
-                             f"{len(debug_changes['removed'])} removed")
+              changelog.append("\n### 📊 Summary")
+              changelog.append(f"- **Production**: {main_changes['total_packages']} total packages")
+              changelog.append(f"- **Debug**: {debug_changes['total_packages']} total packages")
               
               return '\n'.join(changelog)
 
@@ -672,78 +712,51 @@ jobs:
                   sys.exit(1)
               
               # Load current SBOMs
-              try:
-                  # Find the SBOM files in sbom-output
-                  main_sbom_path = None
-                  debug_sbom_path = None
-                  
-                  for root, dirs, files in os.walk('sbom-output'):
-                      for file in files:
-                          if file.endswith('.json'):
-                              filepath = os.path.join(root, file)
-                              # Try to determine if it's main or debug
-                              # Usually the files are named with architecture, so we need to check content
-                              with open(filepath, 'r') as f:
+              main_sbom_path, debug_sbom_path = None, None
+              for root, _, files in os.walk('sbom-output'):
+                  for file in files:
+                      if file.endswith('.json'):
+                          filepath = os.path.join(root, file)
+                          with open(filepath, 'r') as f:
+                              try:
                                   content = json.load(f)
-                                  # Check if this might be a debug image by looking for debug-related packages
-                                  # or by checking the metadata
                                   if 'metadata' in content and 'component' in content['metadata']:
                                       component_name = content['metadata']['component'].get('name', '')
                                       if 'debug' in component_name:
                                           debug_sbom_path = filepath
-                                      elif main_sbom_path is None:
+                                      else:
                                           main_sbom_path = filepath
-                                  elif main_sbom_path is None:
-                                      main_sbom_path = filepath
-                                  elif debug_sbom_path is None:
-                                      debug_sbom_path = filepath
-                  
-                  if not main_sbom_path:
-                      print("Error: Could not find main SBOM in sbom-output/")
-                      sys.exit(1)
-                  
-                  with open(main_sbom_path, 'r') as f:
-                      current_main_sbom = json.load(f)
-                  
-                  current_debug_sbom = None
-                  if debug_sbom_path:
-                      with open(debug_sbom_path, 'r') as f:
-                          current_debug_sbom = json.load(f)
-                  
-              except Exception as e:
-                  print(f"Error loading current SBOMs: {e}")
-                  sys.exit(1)
+                              except json.JSONDecodeError:
+                                  continue
               
+              current_main_sbom = json.load(open(main_sbom_path, 'r')) if main_sbom_path else None
+              current_debug_sbom = json.load(open(debug_sbom_path, 'r')) if debug_sbom_path else None
+              
+              if not current_main_sbom:
+                  print("Error: Could not find current main SBOM.")
+                  sys.exit(1)
+
               # Get previous release SBOMs
               prev_main_sbom, prev_debug_sbom = get_latest_release_sboms(repo, token)
               
               # Compare SBOMs
               main_changes = compare_sboms(prev_main_sbom, current_main_sbom)
-              debug_changes = compare_sboms(prev_debug_sbom, current_debug_sbom) if current_debug_sbom else {'added': [], 'removed': [], 'updated': [], 'total_packages': 0}
+              debug_changes = compare_sboms(prev_debug_sbom, current_debug_sbom)
               
               # Generate changelog
               changelog = generate_changelog(main_changes, debug_changes)
               
-              # Write changelog to file
               with open('sbom-changelog.md', 'w') as f:
                   f.write(changelog)
               
-              # Also save as JSON for potential future use
-              changes_data = {
-                  'main': main_changes,
-                  'debug': debug_changes,
-                  'generated_at': datetime.utcnow().isoformat()
-              }
+              changes_data = {'main': main_changes, 'debug': debug_changes}
               with open('sbom-changes.json', 'w') as f:
                   json.dump(changes_data, f, indent=2)
               
-              print("SBOM comparison completed successfully")
-              print("\nChangelog Preview:")
-              print("=" * 50)
+              print("SBOM comparison completed successfully.")
+              print("\nChangelog Preview:\n" + "="*50)
               print(changelog)
-              print("=" * 50)
-              
-              # Don't write to GITHUB_ENV as it causes issues with wolfi-act
+              print("="*50)
 
           if __name__ == '__main__':
               main()
@@ -852,3 +865,12 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: false
+
+  automerge:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge Dependabot PRs
+        uses: fastify/github-action-merge-dependabot@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
