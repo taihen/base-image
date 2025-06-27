@@ -1,27 +1,28 @@
 # This file defines a minimal, multi-arch glibc base image using apko.
 # It is inspired by the principles of Google Distroless and Chainguard Images.
 # For more information on apko, see: https://github.com/chainguard-dev/apko
+#
+# Using Chainguard's public Wolfi package repository.
+#
+# A minimal set of packages for a glibc-based "distroless" image:
+#
+# - wolfi-baselayout - is the basic layout of the container filesystem, sets
+# up directory structure and permissions for paths, sets root password as
+# * in the passwd file so that the user cannot login, sets up os-release,
+# so scanners are able to identify the os and get the vulnerability db for the same.
+#
+# Additional packages:
+#
+# - ca-certificates-bundle - these are the cert chains for ssl connections
+# - tzdata - is the data with which timezones are used by the OS
+# - glibc - is the libc library for the OS
 
 contents:
-  repositories:
-    # Use Chainguard's public Wolfi package repository
-    - https://packages.wolfi.dev/os
-  keyring:
-    # The public key to verify the Wolfi repository signatures
-    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
-  packages:
-    # A minimal set of packages for a glibc-based "distroless" image
-    # wolfi-baselayout - is the basic layout of the container filesystem, sets up directory structure and permissions for paths, sets root password as * in the passwd file so that the user cannot login, sets up os-release so scanners are able to identify the os and get the vulnerability db for the same
-    # ca-certificates-bundle - these are the cert chains for ssl connections
-    # tzdata - is the data with which timezones are used by the OS
-    # glibc - is the libc library for the OS
-    - ca-certificates-bundle
-    - tzdata
-    - wolfi-baselayout
-    - glibc
+  repositories: ['https://packages.wolfi.dev/os']
+  keyring: ['https://packages.wolfi.dev/os/wolfi-signing.rsa.pub']
+  packages: [ca-certificates-bundle, tzdata, wolfi-baselayout, glibc]
 environment:
   PATH: /usr/sbin:/sbin:/usr/bin:/bin
-
 # Set up a non-root user and group, and run as that user.
 # This is a critical security best practice.
 accounts:
@@ -32,13 +33,11 @@ accounts:
     - groupname: nonroot
       gid: 65532
   run-as: nonroot
-
-# Define the supported architectures. apko will build a multi-arch manifest.
+# Define the supported architectures. apko will build a multi-arch manifest, but
+# Wolfi supports only x86_64 and aarch64.
 archs:
   - x86_64
   - aarch64
-  - armv7
-
 # A distroless image has no shell or entrypoint.
 # The application using this base image will provide its own entrypoint.
 entrypoint: {}
