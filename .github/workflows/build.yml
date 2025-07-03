@@ -565,7 +565,7 @@ jobs:
                       'removed': [],
                       'updated': [],
                       'total_packages': len(new_packages),
-                      'is_first_release': true
+                      'is_first_release': True
                   }
               added = []
               removed = []
@@ -583,7 +583,7 @@ jobs:
                   'removed': removed,
                   'updated': updated,
                   'total_packages': len(new_packages),
-                  'is_first_release': false
+                  'is_first_release': False
               }
           def generate_changelog(main_changes, debug_changes):
               """Generate markdown changelog."""
