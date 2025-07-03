@@ -206,10 +206,18 @@ jobs:
                   with open(path, 'r') as f:
                       try:
                           sbom = json.load(f)
-                          if 'components' in sbom:
-                              for component in sbom['components']:
+                          # Support both 'components' (new) and 'packages' (old)
+                          component_list = sbom.get('components')
+                          if component_list is None:
+                              component_list = sbom.get('packages')
+                          
+                          if component_list:
+                              for component in component_list:
                                   name = component.get('name', 'unknown')
-                                  version = component.get('version', 'unknown')
+                                  # Support both 'version' (new) and 'versionInfo' (old)
+                                  version = component.get('version')
+                                  if version is None:
+                                      version = component.get('versionInfo', 'unknown')
                                   packages[name] = version
                       except json.JSONDecodeError:
                           print(f"Warning: Could not decode JSON from {path}")
@@ -517,17 +525,37 @@ jobs:
                           continue
               return main_packages, debug_packages
           def parse_cyclonedx_sbom(sbom):
-              """Extract package information from a single CycloneDX SBOM."""
+              """Extract package information from a single CycloneDX SBOM, supporting both old and new formats."""
               packages = {}
-              if sbom and 'components' in sbom:
-                  for component in sbom['components']:
-                      name = component.get('name', 'unknown')
-                      version = component.get('version', 'unknown')
-                      license_str = 'unknown'
-                      if 'licenses' in component and component['licenses']:
-                          license_info = component['licenses'][0].get('license', {})
-                          license_str = license_info.get('name', 'unknown')
-                      packages[name] = {'version': version, 'license': license_str}
+              if not sbom:
+                  return packages
+
+              # Determine the list of components based on the SBOM format
+              # New format uses 'components', old format used 'packages'
+              component_list = sbom.get('components')
+              if component_list is None:
+                  component_list = sbom.get('packages')
+
+              if not component_list:
+                  return packages
+
+              for component in component_list:
+                  name = component.get('name', 'unknown')
+                  # New format uses 'version', old format used 'versionInfo'
+                  version = component.get('version')
+                  if version is None:
+                      version = component.get('versionInfo', 'unknown')
+
+                  license_str = 'unknown'
+                  # New format for licenses
+                  if 'licenses' in component and component.get('licenses'):
+                      license_info = component['licenses'][0].get('license', {})
+                      license_str = license_info.get('name', 'unknown')
+                  # Old format for licenses
+                  elif 'licenseDeclared' in component:
+                      license_str = component['licenseDeclared']
+
+                  packages[name] = {'version': version, 'license': license_str}
               return packages
           def compare_sboms(old_packages, new_packages):
               """Compare two sets of packages and return differences."""
