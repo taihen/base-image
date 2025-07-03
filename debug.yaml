@@ -13,3 +13,9 @@ archs:
   - aarch64
 entrypoint:
   command: /bin/sh -l
+annotations:
+  "org.opencontainers.image.authors": "taihen.build@gmail.com"
+  "org.opencontainers.image.url": "https://github.com/taihen/base-image"
+  "org.opencontainers.image.source": "https://github.com/taihen/base-image"
+  "org.opencontainers.image.title": "Distroless glibc Debug Image"
+  "org.opencontainers.image.description": "A minimal, multi-arch glibc debug image."

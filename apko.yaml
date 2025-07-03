@@ -38,3 +38,9 @@ archs:
 # A distroless image has no shell or entrypoint.
 # The application using this base image will provide its own entrypoint.
 entrypoint: {}
+annotations:
+  "org.opencontainers.image.authors": "taihen.build@gmail.com"
+  "org.opencontainers.image.url": "https://github.com/taihen/base-image"
+  "org.opencontainers.image.source": "https://github.com/taihen/base-image"
+  "org.opencontainers.image.title": "Distroless glibc Base Image"
+  "org.opencontainers.image.description": "A minimal, multi-arch glibc base image."
