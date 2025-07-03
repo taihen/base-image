@@ -530,28 +530,23 @@ jobs:
               if not sbom:
                   return packages
 
-              # Determine the list of components based on the SBOM format
-              # New format uses 'components', old format used 'packages'
-              component_list = sbom.get('components')
-              if component_list is None:
-                  component_list = sbom.get('packages')
-
+              component_list = sbom.get('components', [])
               if not component_list:
-                  return packages
+                  component_list = sbom.get('packages', [])
 
               for component in component_list:
+                  # We only care about packages (libraries) and OS components
+                  comp_type = component.get('type')
+                  if comp_type not in ['library', 'operating-system']:
+                      continue
+
                   name = component.get('name', 'unknown')
-                  # New format uses 'version', old format used 'versionInfo'
-                  version = component.get('version')
-                  if version is None:
-                      version = component.get('versionInfo', 'unknown')
+                  version = component.get('version', component.get('versionInfo', 'unknown'))
 
                   license_str = 'unknown'
-                  # New format for licenses
                   if 'licenses' in component and component.get('licenses'):
                       license_info = component['licenses'][0].get('license', {})
                       license_str = license_info.get('name', 'unknown')
-                  # Old format for licenses
                   elif 'licenseDeclared' in component:
                       license_str = component['licenseDeclared']
 
