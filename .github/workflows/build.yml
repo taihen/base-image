@@ -1,12 +1,10 @@
 name: Build & Publish Multi-Arch Distroless glibc Base & Debug Images
-
 on:
   push:
     branches: [main]
   schedule:
     # Run daily at 5 AM UTC to pick up the latest package updates from Wolfi
-    - cron: "0 5 * * *"
-
+    - cron: 0 5 * * *
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,7 +19,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Get previous digest and SBOM from last successful run
         id: previous
         env:
@@ -36,29 +33,27 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/actions/workflows/build.yml/runs?status=success&per_page=1" \
             --jq '.workflow_runs[0].id' || echo "")
-
           if [ -n "$LAST_RUN" ]; then
             echo "Found last successful run: $LAST_RUN"
-            
+
             # List artifacts from that run
             ARTIFACTS=$(gh api \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts")
-            
+
             # Get main digest artifact
             MAIN_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-main-digest") | .id' || echo "")
-            
             if [ -n "$MAIN_DIGEST_ARTIFACT_ID" ]; then
               echo "Found previous main digest artifact: $MAIN_DIGEST_ARTIFACT_ID"
-              
+
               # Download the digest artifact
               gh api \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "/repos/${{ github.repository }}/actions/artifacts/$MAIN_DIGEST_ARTIFACT_ID/zip" \
                 > main-digest-artifact.zip
-              
+
               # Extract and read the digest
               unzip -q main-digest-artifact.zip
               if [ -f digest.txt ]; then
@@ -77,17 +72,16 @@ jobs:
 
             # Get debug digest artifact
             DEBUG_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-debug-digest") | .id' || echo "")
-            
             if [ -n "$DEBUG_DIGEST_ARTIFACT_ID" ]; then
               echo "Found previous debug digest artifact: $DEBUG_DIGEST_ARTIFACT_ID"
-              
+
               # Download the digest artifact
               gh api \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "/repos/${{ github.repository }}/actions/artifacts/$DEBUG_DIGEST_ARTIFACT_ID/zip" \
                 > debug-digest-artifact.zip
-              
+
               # Extract and read the digest
               unzip -q debug-digest-artifact.zip
               if [ -f digest.txt ]; then
@@ -103,20 +97,19 @@ jobs:
               echo "No previous debug digest artifact found"
               echo "debug-digest=" >> $GITHUB_OUTPUT
             fi
-            
+
             # Get SBOM artifacts
             SBOM_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-sbom") | .id' || echo "")
-            
             if [ -n "$SBOM_ARTIFACT_ID" ]; then
               echo "Found previous SBOM artifact: $SBOM_ARTIFACT_ID"
-              
+
               # Download the SBOM artifact
               gh api \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "/repos/${{ github.repository }}/actions/artifacts/$SBOM_ARTIFACT_ID/zip" \
                 > sbom-artifact.zip
-              
+
               # Extract SBOM
               mkdir -p previous-sbom
               unzip -q sbom-artifact.zip -d previous-sbom/
@@ -130,12 +123,11 @@ jobs:
             echo "main-digest=" >> $GITHUB_OUTPUT
             echo "debug-digest=" >> $GITHUB_OUTPUT
           fi
-
       - name: Build, Publish, and Sign with wolfi-act
         id: build
         uses: wolfi-dev/wolfi-act@main
         env:
-          COSIGN_EXPERIMENTAL: "1"
+          COSIGN_EXPERIMENTAL: '1'
           OCI_HOST: ghcr.io
           OCI_REPO: ${{ github.repository }}
         with:
@@ -148,12 +140,10 @@ jobs:
 
             # Create directories for the SBOMs
             mkdir -p sbom-main sbom-debug
-
             echo "Building main image..."
             # Publish the main multi-arch image using apko, which also generates an SBOM.
             main_digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
               --sbom-path=sbom-main)
-
             echo "Building debug image..."
             # Publish the debug multi-arch image using apko, which also generates an SBOM.
             debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
@@ -175,14 +165,12 @@ jobs:
             # Sign both image digests using Cosign keyless signing.
             echo "Signing main image..."
             cosign sign --yes "$main_digest"
-
             echo "Signing debug image..."
             cosign sign --yes "$debug_digest"
 
             # Save the digests to files that can be read outside the container
             echo "$main_digest" > main-digest.txt
             echo "$debug_digest" > debug-digest.txt
-
       - name: Extract digests
         id: extract-digest
         run: |
@@ -193,7 +181,6 @@ jobs:
           echo "debug-digest=$DEBUG_DIGEST" >> $GITHUB_OUTPUT
           echo "Extracted main digest: $MAIN_DIGEST"
           echo "Extracted debug digest: $DEBUG_DIGEST"
-
       - name: Compare SBOMs
         id: sbom-compare
         run: |
@@ -201,7 +188,6 @@ jobs:
           import json
           import os
           import sys
-
           def get_sbom_files(directory, prefix):
               sbom_files = []
               if not os.path.exists(directory):
@@ -212,7 +198,6 @@ jobs:
                       if file.startswith(prefix) and file.endswith('.json'):
                           sbom_files.append(os.path.join(root, file))
               return sbom_files
-
           def parse_sboms(paths):
               packages = {}
               for path in paths:
@@ -229,7 +214,6 @@ jobs:
                       except json.JSONDecodeError:
                           print(f"Warning: Could not decode JSON from {path}")
               return packages
-
           def compare_packages(old_pkgs, new_pkgs):
               if not old_pkgs and not new_pkgs:
                   return False
@@ -237,32 +221,25 @@ jobs:
                   print("No previous SBOM found. Assuming changes.")
                   return True
               return old_pkgs != new_pkgs
-
           def main():
               prev_main_files = get_sbom_files('previous-sbom', 'main_')
               prev_debug_files = get_sbom_files('previous-sbom', 'debug_')
               curr_main_files = get_sbom_files('sbom-output', 'main_')
               curr_debug_files = get_sbom_files('sbom-output', 'debug_')
-
               print(f"Previous main SBOMs: {prev_main_files}")
               print(f"Previous debug SBOMs: {prev_debug_files}")
               print(f"Current main SBOMs: {curr_main_files}")
               print(f"Current debug SBOMs: {curr_debug_files}")
-
               prev_main_pkgs = parse_sboms(prev_main_files)
               curr_main_pkgs = parse_sboms(curr_main_files)
-
               prev_debug_pkgs = parse_sboms(prev_debug_files)
               curr_debug_pkgs = parse_sboms(curr_debug_files)
-
               main_changed = compare_packages(prev_main_pkgs, curr_main_pkgs)
               if main_changed:
                   print("Main SBOM has changes.")
-
               debug_changed = compare_packages(prev_debug_pkgs, curr_debug_pkgs)
               if debug_changed:
                   print("Debug SBOM has changes.")
-
               if main_changed or debug_changed:
                   print("Changes detected in SBOMs.")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
@@ -271,13 +248,10 @@ jobs:
                   print("No changes detected in SBOMs.")
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                       f.write('sbom-changes=false\n')
-
           if __name__ == "__main__":
               main()
           EOF
-
           python3 sbom_comparator.py
-
       - name: Compare digests and SBOMs
         id: compare
         run: |
@@ -286,25 +260,21 @@ jobs:
           PREVIOUS_DEBUG="${{ steps.previous.outputs.debug-digest }}"
           CURRENT_DEBUG="${{ steps.extract-digest.outputs.debug-digest }}"
           SBOM_CHANGES="${{ steps.sbom-compare.outputs.sbom-changes }}"
-
           echo "Previous main digest: $PREVIOUS_MAIN"
           echo "Current main digest: $CURRENT_MAIN"
           echo "Previous debug digest: $PREVIOUS_DEBUG"
           echo "Current debug digest: $CURRENT_DEBUG"
           echo "SBOM changes: $SBOM_CHANGES"
-
           MAIN_DIGEST_CHANGED=false
           if [ -z "$PREVIOUS_MAIN" ] || [ "$PREVIOUS_MAIN" != "$CURRENT_MAIN" ]; then
             echo "Main image has changes (digest)"
             MAIN_DIGEST_CHANGED=true
           fi
-
           DEBUG_DIGEST_CHANGED=false
           if [ -z "$PREVIOUS_DEBUG" ] || [ "$PREVIOUS_DEBUG" != "$CURRENT_DEBUG" ]; then
             echo "Debug image has changes (digest)"
             DEBUG_DIGEST_CHANGED=true
           fi
-
           if [ "$MAIN_DIGEST_CHANGED" = true ] || [ "$DEBUG_DIGEST_CHANGED" = true ] || [ "$SBOM_CHANGES" = true ]; then
             echo "has-changes=true" >> $GITHUB_OUTPUT
             echo "Changes detected"
@@ -312,7 +282,6 @@ jobs:
             echo "has-changes=false" >> $GITHUB_OUTPUT
             echo "No changes detected"
           fi
-
       - name: Save current digests
         run: |
           mkdir -p current-main-digest current-debug-digest
@@ -320,7 +289,6 @@ jobs:
           echo "${{ steps.extract-digest.outputs.debug-digest }}" > current-debug-digest/digest.txt
           # Clean up temporary files
           rm -f main-digest.txt debug-digest.txt
-
       - name: Upload current main digest artifact
         uses: actions/upload-artifact@v4
         with:
@@ -328,7 +296,6 @@ jobs:
           path: current-main-digest/digest.txt
           retention-days: 7
           overwrite: true
-
       - name: Upload current debug digest artifact
         uses: actions/upload-artifact@v4
         with:
@@ -336,13 +303,11 @@ jobs:
           path: current-debug-digest/digest.txt
           retention-days: 7
           overwrite: true
-
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: sbom-output/
-
       - name: Upload SBOM for future comparisons
         uses: actions/upload-artifact@v4
         with:
@@ -350,7 +315,6 @@ jobs:
           path: sbom-output/
           retention-days: 7
           overwrite: true
-
   test:
     needs: build
     if: needs.build.outputs.has-changes == 'true'
@@ -364,22 +328,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: linux/arm64,linux/amd64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Set test configuration
         id: test-config
         run: |
@@ -390,19 +350,16 @@ jobs:
             echo "base-image=${{ needs.build.outputs.debug-digest }}" >> $GITHUB_OUTPUT
             echo "expected-user=0" >> $GITHUB_OUTPUT
           fi
-
       - name: Create test Go application for ${{ matrix.variant }}
         run: |
           mkdir -p test-app
           cat > test-app/main.go << 'EOF'
           package main
-
           import (
               "fmt"
               "os"
               "runtime"
           )
-
           func main() {
               fmt.Printf("Hello from base-image test (${{ matrix.variant }})!\n")
               fmt.Printf("OS: %s\n", runtime.GOOS)
@@ -410,23 +367,19 @@ jobs:
               fmt.Printf("Go version: %s\n", runtime.Version())
               fmt.Printf("User: %d\n", os.Getuid())
               fmt.Printf("Group: %d\n", os.Getgid())
-
               // Test that we can read environment variables
               if testVar := os.Getenv("TEST_VAR"); testVar != "" {
                   fmt.Printf("TEST_VAR: %s\n", testVar)
               }
-
               // Test that we're running as expected user
               expectedUser := ${{ steps.test-config.outputs.expected-user }}
               if os.Getuid() != expectedUser {
                   fmt.Printf("ERROR: Expected UID %d, got %d\n", expectedUser, os.Getuid())
                   os.Exit(1)
               }
-
               fmt.Println("All tests passed!")
           }
           EOF
-
       - name: Create test Dockerfile for ${{ matrix.variant }}
         run: |
           cat > test-app/Dockerfile << 'EOF'
@@ -447,7 +400,6 @@ jobs:
           # Keep the user as-is from the base image (nonroot for main, root for debug)
           ENTRYPOINT ["/hello"]
           EOF
-
       - name: Test ${{ matrix.variant }} image on linux/amd64
         run: |
           echo "Testing ${{ matrix.variant }} on linux/amd64..."
@@ -463,7 +415,6 @@ jobs:
             --platform linux/amd64 \
             -e TEST_VAR="Hello from ${{ matrix.variant }} test" \
             test-app:amd64
-
       - name: Test ${{ matrix.variant }} image on linux/arm64
         run: |
           echo "Testing ${{ matrix.variant }} on linux/arm64..."
@@ -479,17 +430,15 @@ jobs:
             --platform linux/arm64 \
             -e TEST_VAR="Hello from ${{ matrix.variant }} test" \
             test-app:arm64
-
       - name: Security scan with Trivy for ${{ matrix.variant }}
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ steps.test-config.outputs.base-image }}
-          format: "table"
-          exit-code: "0" # Don't fail on vulnerabilities, just report
+          format: table
+          exit-code: '0' # Don't fail on vulnerabilities, just report
           ignore-unfixed: true
-          vuln-type: "os,library"
-          severity: "CRITICAL,HIGH"
-
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
   release:
     needs: [build, test]
     if: needs.build.outputs.has-changes == 'true'
@@ -500,7 +449,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Generate release tag
         id: tag
         run: |
@@ -513,21 +461,17 @@ jobs:
             COUNTER=$((COUNTER + 1))
             TAG="v$(date +'%Y.%m.%d').${COUNTER}"
           done
-
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Generated tag: $TAG"
-
       - name: Download SBOM artifact
         uses: actions/download-artifact@v4
         with:
           name: sbom
           path: sbom-output
-
       - name: List downloaded SBOMs for debugging
         run: |
           echo "Contents of sbom-output:"
           ls -R sbom-output
-
       - name: Compare SBOMs and Generate Changelog
         id: sbom-diff
         env:
@@ -545,7 +489,6 @@ jobs:
           import requests
           import zipfile
           import io
-
           def get_latest_release_sboms(repo, token):
               """Download and parse SBOMs from the latest GitHub release."""
               headers = {'Authorization': f'token {token}'}
@@ -554,13 +497,10 @@ jobs:
               if response.status_code == 404:
                   print("No previous release found.")
                   return {}, {}
-
               release = response.json()
               print(f"Found previous release: {release['tag_name']}")
-
               main_packages = {}
               debug_packages = {}
-
               for asset in release.get('assets', []):
                   if asset['name'].endswith('.json') and 'sbom' in asset['name'].lower():
                       download_url = asset['browser_download_url']
@@ -575,22 +515,20 @@ jobs:
                       except json.JSONDecodeError:
                           print(f"Warning: Could not decode JSON from asset {asset['name']}")
                           continue
-              
               return main_packages, debug_packages
-
           def parse_cyclonedx_sbom(sbom):
               """Extract package information from a single CycloneDX SBOM."""
               packages = {}
-              if sbom and 'packages' in sbom:
-                  for component in sbom['packages']:
+              if sbom and 'components' in sbom:
+                  for component in sbom['components']:
                       name = component.get('name', 'unknown')
-                      version = component.get('versionInfo', 'unknown')
+                      version = component.get('version', 'unknown')
                       license_str = 'unknown'
-                      if 'licenseDeclared' in component:
-                          license_str = component['licenseDeclared']
+                      if 'licenses' in component and component['licenses']:
+                          license_info = component['licenses'][0].get('license', {})
+                          license_str = license_info.get('name', 'unknown')
                       packages[name] = {'version': version, 'license': license_str}
               return packages
-
           def compare_sboms(old_packages, new_packages):
               """Compare two sets of packages and return differences."""
               if not old_packages:
@@ -599,31 +537,26 @@ jobs:
                       'removed': [],
                       'updated': [],
                       'total_packages': len(new_packages),
-                      'is_first_release': True
+                      'is_first_release': true
                   }
-
               added = []
               removed = []
               updated = []
-
               for name, info in new_packages.items():
                   if name not in old_packages:
                       added.append((name, info['version'], info['license']))
                   elif old_packages[name]['version'] != info['version']:
                       updated.append((name, old_packages[name]['version'], info['version']))
-
               for name, info in old_packages.items():
                   if name not in new_packages:
                       removed.append((name, info['version']))
-
               return {
                   'added': added,
                   'removed': removed,
                   'updated': updated,
                   'total_packages': len(new_packages),
-                  'is_first_release': False
+                  'is_first_release': false
               }
-
           def generate_changelog(main_changes, debug_changes):
               """Generate markdown changelog."""
               changelog = []
@@ -632,15 +565,12 @@ jobs:
                   changelog.append(f"- **Production Image**: {main_changes['total_packages']} packages")
                   changelog.append(f"- **Debug Image**: {debug_changes.get('total_packages', 0)} packages")
                   return '\n'.join(changelog)
-
               has_main_changes = bool(main_changes['added'] or main_changes['removed'] or main_changes['updated'])
               has_debug_changes = bool(debug_changes['added'] or debug_changes['removed'] or debug_changes['updated'])
-
               if not has_main_changes and not has_debug_changes:
                   changelog.append("### 📦 Package Changes\n")
                   changelog.append("ℹ️ **No package changes detected** (metadata or rebuild only)")
                   return '\n'.join(changelog)
-
               changelog.append("### 📦 Package Changes\n")
               if has_main_changes:
                   changelog.append("#### Production Image\n")
@@ -658,7 +588,6 @@ jobs:
                           changelog.append(f"- `{name}` v{version}")
               else:
                   changelog.append("#### Production Image\nNo changes\n")
-
               if has_debug_changes:
                   changelog.append("\n#### Debug Image\n")
                   if debug_changes['updated']:
@@ -675,12 +604,10 @@ jobs:
                           changelog.append(f"- `{name}` v{version}")
               else:
                   changelog.append("\n#### Debug Image\nNo changes\n")
-
               changelog.append("\n### 📊 Summary")
               changelog.append(f"- **Production**: {main_changes['total_packages']} total packages")
               changelog.append(f"- **Debug**: {debug_changes.get('total_packages', 0)} total packages")
               return '\n'.join(changelog)
-
           def main():
               repo = os.environ.get('GITHUB_REPOSITORY')
               token = os.environ.get('GH_TOKEN')
@@ -700,7 +627,6 @@ jobs:
                                   sbom_content = json.load(f)
                                   # Parse the SBOM content to extract packages
                                   packages = parse_cyclonedx_sbom(sbom_content)
-                                  
                                   if file.startswith('debug_'):
                                       current_debug_packages.update(packages)
                                   elif file.startswith('main_'):
@@ -708,7 +634,6 @@ jobs:
                               except json.JSONDecodeError:
                                   print(f"Warning: Could not decode JSON from {filepath}")
                                   continue
-
               if not current_main_packages:
                   print("Error: Could not find any current main SBOMs.")
                   sys.exit(1)
@@ -722,26 +647,21 @@ jobs:
 
               # Generate changelog
               changelog = generate_changelog(main_changes, debug_changes)
-
               with open('sbom-changelog.md', 'w') as f:
                   f.write(changelog)
-
               changes_data = {'main': main_changes, 'debug': debug_changes}
               with open('sbom-changes.json', 'w') as f:
                   json.dump(changes_data, f, indent=2)
-
               print("SBOM comparison completed successfully.")
               print("\nChangelog Preview:\n" + "="*50)
               print(changelog)
               print("="*50)
-
           if __name__ == '__main__':
               main()
           EOF
 
           # Run the comparison script
           python3 compare_sboms.py
-
       - name: Upload SBOM changelog artifact
         uses: actions/upload-artifact@v4
         with:
@@ -750,7 +670,6 @@ jobs:
             sbom-changelog.md
             sbom-changes.json
           retention-days: 90
-
       - name: Tag images with release version using wolfi-act
         uses: wolfi-dev/wolfi-act@main
         env:
@@ -763,7 +682,6 @@ jobs:
 
             # Log in to the GitHub Container Registry
             echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
-
             TAG="${{ steps.tag.outputs.tag }}"
 
             # Tag main image with version and latest
@@ -773,11 +691,9 @@ jobs:
             # Tag debug image with version-debug and debug
             crane tag "${{ needs.build.outputs.debug-digest }}" "$TAG-debug"
             crane tag "${{ needs.build.outputs.debug-digest }}" "debug"
-
             echo "Successfully tagged images:"
             echo "Main: $TAG, latest"
             echo "Debug: $TAG-debug, debug"
-
       - name: Create release body
         run: |
           # Read the SBOM changelog
@@ -788,21 +704,16 @@ jobs:
           TAG="${{ steps.tag.outputs.tag }}"
           MAIN_DIGEST="${{ needs.build.outputs.main-digest }}"
           DEBUG_DIGEST="${{ needs.build.outputs.debug-digest }}"
-
           cat > release-body.md << RELEASE_EOF
           ## 🚀 Automated Release
-
           This release includes both the main distroless image and debug variant.
-
           $SBOM_CHANGELOG
 
           ### 📦 Container Images
-
           **Main Image (Production)**
           - **Image**: \`ghcr.io/${REPO}:latest\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}\`
           - **Digest**: \`${MAIN_DIGEST}\`
-
           **Debug Image (Development)**
           - **Image**: \`ghcr.io/${REPO}:debug\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}-debug\`
@@ -816,7 +727,7 @@ jobs:
             --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 
-          # Debug image  
+          # Debug image
           cosign verify ${DEBUG_DIGEST} \\
             --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
@@ -828,7 +739,6 @@ jobs:
           ### ⚠️ Debug Image Warning
           The debug image should **NEVER** be used in production as it includes debugging tools and runs as root.
           RELEASE_EOF
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -843,7 +753,6 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: false
-
   automerge:
     needs: release
     runs-on: ubuntu-latest
