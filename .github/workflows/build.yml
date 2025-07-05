@@ -201,32 +201,14 @@ jobs:
       - name: Compare digests and SBOMs
         id: compare
         run: |
-          PREVIOUS_MAIN="${{ steps.previous.outputs.main-digest }}"
-          CURRENT_MAIN="${{ steps.extract-digest.outputs.main-digest }}"
-          PREVIOUS_DEBUG="${{ steps.previous.outputs.debug-digest }}"
-          CURRENT_DEBUG="${{ steps.extract-digest.outputs.debug-digest }}"
           SBOM_CHANGES="${{ steps.sbom-compare.outputs.sbom-changes }}"
-          echo "Previous main digest: $PREVIOUS_MAIN"
-          echo "Current main digest: $CURRENT_MAIN"
-          echo "Previous debug digest: $PREVIOUS_DEBUG"
-          echo "Current debug digest: $CURRENT_DEBUG"
           echo "SBOM changes: $SBOM_CHANGES"
-          MAIN_DIGEST_CHANGED=false
-          if [ -z "$PREVIOUS_MAIN" ] || [ "$PREVIOUS_MAIN" != "$CURRENT_MAIN" ]; then
-            echo "Main image has changes (digest)"
-            MAIN_DIGEST_CHANGED=true
-          fi
-          DEBUG_DIGEST_CHANGED=false
-          if [ -z "$PREVIOUS_DEBUG" ] || [ "$PREVIOUS_DEBUG" != "$CURRENT_DEBUG" ]; then
-            echo "Debug image has changes (digest)"
-            DEBUG_DIGEST_CHANGED=true
-          fi
-          if [ "$MAIN_DIGEST_CHANGED" = true ] || [ "$DEBUG_DIGEST_CHANGED" = true ] || [ "$SBOM_CHANGES" = true ]; then
+          if [ "$SBOM_CHANGES" = true ]; then
             echo "has-changes=true" >> $GITHUB_OUTPUT
-            echo "Changes detected"
+            echo "Changes detected in packages"
           else
             echo "has-changes=false" >> $GITHUB_OUTPUT
-            echo "No changes detected"
+            echo "No changes detected in packages"
           fi
       - name: Save current digests
         run: |
@@ -386,7 +368,7 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
   release:
-    if: github.event_name == 'push' || github.event_name == 'schedule'
+    if: (github.event_name == 'push' || github.event_name == 'schedule') && needs.build.outputs.has-changes == 'true'
     needs: [build, test]
     runs-on: ubuntu-latest
     permissions:
