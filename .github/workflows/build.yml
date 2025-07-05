@@ -381,7 +381,7 @@ jobs:
         with:
           image-ref: ${{ steps.test-config.outputs.base-image }}
           format: table
-          exit-code: '0' # Don't fail on vulnerabilities, just report
+          exit-code: '1'
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
