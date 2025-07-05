@@ -39,11 +39,19 @@ def parse_cyclonedx_sbom(sbom):
 
     component_list = sbom.get('components', [])
     if not component_list:
+        # Handle the older SPDX format where packages are in the 'packages' list
         component_list = sbom.get('packages', [])
 
     for component in component_list:
-        # Exclude file components to avoid hashes in the release notes
-        if component.get('type') == 'file':
+        # To be considered a package for the changelog, the component must have a PURL
+        # indicating it was installed from the Wolfi APK repository.
+        is_wolfi_package = False
+        for ref in component.get('externalRefs', []):
+            if ref.get('referenceCategory') == 'PACKAGE-MANAGER' and ref.get('referenceLocator', '').startswith('pkg:apk/wolfi/'):
+                is_wolfi_package = True
+                break
+        
+        if not is_wolfi_package:
             continue
 
         name = component.get('name', 'unknown')
