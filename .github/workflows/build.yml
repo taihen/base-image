@@ -504,6 +504,7 @@ jobs:
           prerelease: false
   automerge:
     needs: release
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Merge Dependabot PRs
