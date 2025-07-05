@@ -1,17 +1,27 @@
-name: Build & Publish Multi-Arch Distroless glibc Base & Debug Images
+name: Build, Test & Publish
+
 on:
+  # Trigger on pushes to the main branch (for releases)
   push:
-    branches: [main]
+    branches: [ main ]
+  # Trigger on a schedule (for daily updates)
   schedule:
-    # Run daily at 5 AM UTC to pick up the latest package updates from Wolfi
-    - cron: 0 5 * * *
+    - cron: '0 5 * * *'
+  # Make the workflow reusable by other workflows
+  workflow_call:
+    inputs:
+      ref:
+        description: 'The git ref to checkout for validation'
+        required: true
+        type: string
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write # Required for keyless signing with Cosign
+      id-token: write
     outputs:
       main-digest: ${{ steps.extract-digest.outputs.main-digest }}
       debug-digest: ${{ steps.extract-digest.outputs.debug-digest }}
@@ -19,6 +29,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # When called by another workflow, use the ref it provides.
+          # Otherwise, use the default ref for the event (e.g., main branch).
+          ref: ${{ github.event.inputs.ref || github.ref }}
       - name: Get previous digest and SBOM from last successful run
         id: previous
         env:
@@ -249,7 +263,7 @@ jobs:
           overwrite: true
   test:
     needs: build
-    if: needs.build.outputs.has-changes == 'true'
+    if: success()
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -372,8 +386,8 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
   release:
+    if: github.event_name == 'push' || github.event_name == 'schedule'
     needs: [build, test]
-    if: needs.build.outputs.has-changes == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -502,12 +516,4 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: false
-  automerge:
-    needs: release
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Merge Dependabot PRs
-        uses: fastify/github-action-merge-dependabot@v3
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+  

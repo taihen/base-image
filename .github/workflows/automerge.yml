@@ -1,0 +1,24 @@
+name: Dependabot Automerge
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  validate:
+    if: github.actor == 'dependabot[bot]' && !github.event.pull_request.draft
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha }}
+    secrets: inherit
+  automerge:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approve and enable automerge for Dependabot PR
+        uses: fastify/github-action-merge-dependabot@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          approve: true
