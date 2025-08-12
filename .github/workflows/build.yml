@@ -28,7 +28,7 @@ jobs:
       has-changes: ${{ steps.compare.outputs.has-changes }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # When called by another workflow, use the ref it provides.
           # Otherwise, use the default ref for the event (e.g., main branch).
@@ -255,7 +255,7 @@ jobs:
         variant: [main, debug]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -376,7 +376,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Generate release tag
         id: tag
         run: |
