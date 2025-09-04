@@ -23,7 +23,8 @@ jobs:
       packages: write
       id-token: write
     outputs:
-      main-digest: ${{ steps.extract-digest.outputs.main-digest }}
+      base-digest: ${{ steps.extract-digest.outputs.base-digest }}
+      glibc-digest: ${{ steps.extract-digest.outputs.glibc-digest }}
       debug-digest: ${{ steps.extract-digest.outputs.debug-digest }}
       has-changes: ${{ steps.compare.outputs.has-changes }}
     steps:
@@ -56,32 +57,60 @@ jobs:
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts")
 
-            # Get main digest artifact
-            MAIN_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-main-digest") | .id' || echo "")
-            if [ -n "$MAIN_DIGEST_ARTIFACT_ID" ]; then
-              echo "Found previous main digest artifact: $MAIN_DIGEST_ARTIFACT_ID"
+            # Get base digest artifact
+            BASE_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-base-digest") | .id' || echo "")
+            if [ -n "$BASE_DIGEST_ARTIFACT_ID" ]; then
+              echo "Found previous base digest artifact: $BASE_DIGEST_ARTIFACT_ID"
 
               # Download the digest artifact
               gh api \
                 -H "Accept: application/vnd.github+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$MAIN_DIGEST_ARTIFACT_ID/zip" \
-                > main-digest-artifact.zip
+                "/repos/${{ github.repository }}/actions/artifacts/$BASE_DIGEST_ARTIFACT_ID/zip" \
+                > base-digest-artifact.zip
 
               # Extract and read the digest
-              unzip -q main-digest-artifact.zip
+              unzip -q base-digest-artifact.zip
               if [ -f digest.txt ]; then
-                MAIN_DIGEST=$(cat digest.txt)
-                echo "main-digest=$MAIN_DIGEST" >> $GITHUB_OUTPUT
-                echo "Previous main digest found: $MAIN_DIGEST"
-                rm -f main-digest-artifact.zip digest.txt
+                BASE_DIGEST=$(cat digest.txt)
+                echo "base-digest=$BASE_DIGEST" >> $GITHUB_OUTPUT
+                echo "Previous base digest found: $BASE_DIGEST"
+                rm -f base-digest-artifact.zip digest.txt
               else
-                echo "No digest.txt found in main artifact"
-                echo "main-digest=" >> $GITHUB_OUTPUT
+                echo "No digest.txt found in base artifact"
+                echo "base-digest=" >> $GITHUB_OUTPUT
               fi
             else
-              echo "No previous main digest artifact found"
-              echo "main-digest=" >> $GITHUB_OUTPUT
+              echo "No previous base digest artifact found"
+              echo "base-digest=" >> $GITHUB_OUTPUT
+            fi
+
+            # Get glibc digest artifact
+            GLIBC_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-glibc-digest") | .id' || echo "")
+            if [ -n "$GLIBC_DIGEST_ARTIFACT_ID" ]; then
+              echo "Found previous glibc digest artifact: $GLIBC_DIGEST_ARTIFACT_ID"
+
+              # Download the digest artifact
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/${{ github.repository }}/actions/artifacts/$GLIBC_DIGEST_ARTIFACT_ID/zip" \
+                > glibc-digest-artifact.zip
+
+              # Extract and read the digest
+              unzip -q glibc-digest-artifact.zip
+              if [ -f digest.txt ]; then
+                GLIBC_DIGEST=$(cat digest.txt)
+                echo "glibc-digest=$GLIBC_DIGEST" >> $GITHUB_OUTPUT
+                echo "Previous glibc digest found: $GLIBC_DIGEST"
+                rm -f glibc-digest-artifact.zip digest.txt
+              else
+                echo "No digest.txt found in glibc artifact"
+                echo "glibc-digest=" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "No previous glibc digest artifact found"
+              echo "glibc-digest=" >> $GITHUB_OUTPUT
             fi
 
             # Get debug digest artifact
@@ -134,7 +163,8 @@ jobs:
             fi
           else
             echo "No previous successful workflow run found"
-            echo "main-digest=" >> $GITHUB_OUTPUT
+            echo "base-digest=" >> $GITHUB_OUTPUT
+            echo "glibc-digest=" >> $GITHUB_OUTPUT
             echo "debug-digest=" >> $GITHUB_OUTPUT
           fi
       - name: Build, Publish, and Sign with wolfi-act
@@ -153,11 +183,18 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
 
             # Create directories for the SBOMs
-            mkdir -p sbom-main sbom-debug
-            echo "Building main image..."
-            # Publish the main multi-arch image using apko, which also generates an SBOM.
-            main_digest=$(apko publish apko.yaml "$OCI_HOST/$OCI_REPO" \
-              --sbom-path=sbom-main)
+            mkdir -p sbom-base sbom-glibc sbom-debug
+            
+            echo "Building base image (latest)..."
+            # Publish the base multi-arch image using apko, which also generates an SBOM.
+            base_digest=$(apko publish base.yaml "$OCI_HOST/$OCI_REPO" \
+              --sbom-path=sbom-base)
+            
+            echo "Building glibc image..."
+            # Publish the glibc multi-arch image using apko, which also generates an SBOM.
+            glibc_digest=$(apko publish glibc.yaml "$OCI_HOST/$OCI_REPO:glibc" \
+              --sbom-path=sbom-glibc)
+            
             echo "Building debug image..."
             # Publish the debug multi-arch image using apko, which also generates an SBOM.
             debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
@@ -165,9 +202,14 @@ jobs:
 
             # Consolidate SBOMs into a single output directory
             mkdir -p sbom-output
-            for f in sbom-main/*.json; do
+            for f in sbom-base/*.json; do
               if [ -f "$f" ]; then
-                cp "$f" "sbom-output/main_$(basename "$f")"
+                cp "$f" "sbom-output/base_$(basename "$f")"
+              fi
+            done
+            for f in sbom-glibc/*.json; do
+              if [ -f "$f" ]; then
+                cp "$f" "sbom-output/glibc_$(basename "$f")"
               fi
             done
             for f in sbom-debug/*.json; do
@@ -176,24 +218,30 @@ jobs:
               fi
             done
 
-            # Sign both image digests using Cosign keyless signing.
-            echo "Signing main image..."
-            cosign sign --yes "$main_digest"
+            # Sign all three image digests using Cosign keyless signing.
+            echo "Signing base image..."
+            cosign sign --yes "$base_digest"
+            echo "Signing glibc image..."
+            cosign sign --yes "$glibc_digest"
             echo "Signing debug image..."
             cosign sign --yes "$debug_digest"
 
             # Save the digests to files that can be read outside the container
-            echo "$main_digest" > main-digest.txt
+            echo "$base_digest" > base-digest.txt
+            echo "$glibc_digest" > glibc-digest.txt
             echo "$debug_digest" > debug-digest.txt
       - name: Extract digests
         id: extract-digest
         run: |
           # Read the digests from the files created in the container
-          MAIN_DIGEST=$(cat main-digest.txt)
+          BASE_DIGEST=$(cat base-digest.txt)
+          GLIBC_DIGEST=$(cat glibc-digest.txt)
           DEBUG_DIGEST=$(cat debug-digest.txt)
-          echo "main-digest=$MAIN_DIGEST" >> $GITHUB_OUTPUT
+          echo "base-digest=$BASE_DIGEST" >> $GITHUB_OUTPUT
+          echo "glibc-digest=$GLIBC_DIGEST" >> $GITHUB_OUTPUT
           echo "debug-digest=$DEBUG_DIGEST" >> $GITHUB_OUTPUT
-          echo "Extracted main digest: $MAIN_DIGEST"
+          echo "Extracted base digest: $BASE_DIGEST"
+          echo "Extracted glibc digest: $GLIBC_DIGEST"
           echo "Extracted debug digest: $DEBUG_DIGEST"
       - name: Compare SBOMs
         id: sbom-compare
@@ -212,16 +260,24 @@ jobs:
           fi
       - name: Save current digests
         run: |
-          mkdir -p current-main-digest current-debug-digest
-          echo "${{ steps.extract-digest.outputs.main-digest }}" > current-main-digest/digest.txt
+          mkdir -p current-base-digest current-glibc-digest current-debug-digest
+          echo "${{ steps.extract-digest.outputs.base-digest }}" > current-base-digest/digest.txt
+          echo "${{ steps.extract-digest.outputs.glibc-digest }}" > current-glibc-digest/digest.txt
           echo "${{ steps.extract-digest.outputs.debug-digest }}" > current-debug-digest/digest.txt
           # Clean up temporary files
-          rm -f main-digest.txt debug-digest.txt
-      - name: Upload current main digest artifact
+          rm -f base-digest.txt glibc-digest.txt debug-digest.txt
+      - name: Upload current base digest artifact
         uses: actions/upload-artifact@v4
         with:
-          name: previous-main-digest
-          path: current-main-digest/digest.txt
+          name: previous-base-digest
+          path: current-base-digest/digest.txt
+          retention-days: 7
+          overwrite: true
+      - name: Upload current glibc digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: previous-glibc-digest
+          path: current-glibc-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload current debug digest artifact
@@ -252,7 +308,7 @@ jobs:
       packages: read
     strategy:
       matrix:
-        variant: [main, debug]
+        variant: [base, glibc, debug]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -271,8 +327,11 @@ jobs:
       - name: Set test configuration
         id: test-config
         run: |
-          if [ "${{ matrix.variant }}" = "main" ]; then
-            echo "base-image=${{ needs.build.outputs.main-digest }}" >> $GITHUB_OUTPUT
+          if [ "${{ matrix.variant }}" = "base" ]; then
+            echo "base-image=${{ needs.build.outputs.base-digest }}" >> $GITHUB_OUTPUT
+            echo "expected-user=65532" >> $GITHUB_OUTPUT
+          elif [ "${{ matrix.variant }}" = "glibc" ]; then
+            echo "base-image=${{ needs.build.outputs.glibc-digest }}" >> $GITHUB_OUTPUT
             echo "expected-user=65532" >> $GITHUB_OUTPUT
           else
             echo "base-image=${{ needs.build.outputs.debug-digest }}" >> $GITHUB_OUTPUT
@@ -429,15 +488,20 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
             TAG="${{ steps.tag.outputs.tag }}"
 
-            # Tag main image with version and latest
-            crane tag "${{ needs.build.outputs.main-digest }}" "$TAG"
-            crane tag "${{ needs.build.outputs.main-digest }}" "latest"
+            # Tag base image with version and latest
+            crane tag "${{ needs.build.outputs.base-digest }}" "$TAG"
+            crane tag "${{ needs.build.outputs.base-digest }}" "latest"
+
+            # Tag glibc image with version-glibc and glibc
+            crane tag "${{ needs.build.outputs.glibc-digest }}" "$TAG-glibc"
+            crane tag "${{ needs.build.outputs.glibc-digest }}" "glibc"
 
             # Tag debug image with version-debug and debug
             crane tag "${{ needs.build.outputs.debug-digest }}" "$TAG-debug"
             crane tag "${{ needs.build.outputs.debug-digest }}" "debug"
             echo "Successfully tagged images:"
-            echo "Main: $TAG, latest"
+            echo "Base: $TAG, latest"
+            echo "glibc: $TAG-glibc, glibc"
             echo "Debug: $TAG-debug, debug"
       - name: Create release body
         run: |
@@ -447,28 +511,40 @@ jobs:
           # Set variables from GitHub Actions context
           REPO="${{ github.repository }}"
           TAG="${{ steps.tag.outputs.tag }}"
-          MAIN_DIGEST="${{ needs.build.outputs.main-digest }}"
+          BASE_DIGEST="${{ needs.build.outputs.base-digest }}"
+          GLIBC_DIGEST="${{ needs.build.outputs.glibc-digest }}"
           DEBUG_DIGEST="${{ needs.build.outputs.debug-digest }}"
           cat > release-body.md << RELEASE_EOF
           ## 🚀 Automated Release
-          This release includes both the main distroless image and debug variant.
+          This release includes all three image variants: base (musl), glibc, and debug.
           $SBOM_CHANGELOG
 
           ### 📦 Container Images
-          **Main Image (Production)**
+          **Base Image (Production - musl libc)**
           - **Image**: \`ghcr.io/${REPO}:latest\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}\`
-          - **Digest**: \`${MAIN_DIGEST}\`
+          - **Digest**: \`${BASE_DIGEST}\`
+          
+          **glibc Image (Production - GNU libc)**
+          - **Image**: \`ghcr.io/${REPO}:glibc\`
+          - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}-glibc\`
+          - **Digest**: \`${GLIBC_DIGEST}\`
+          
           **Debug Image (Development)**
           - **Image**: \`ghcr.io/${REPO}:debug\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}-debug\`
           - **Digest**: \`${DEBUG_DIGEST}\`
 
           ### 🔐 Verification
-          You can verify both image signatures using:
+          You can verify all image signatures using:
           \`\`\`bash
-          # Main image
-          cosign verify ${MAIN_DIGEST} \\
+          # Base image
+          cosign verify ${BASE_DIGEST} \\
+            --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+
+          # glibc image
+          cosign verify ${GLIBC_DIGEST} \\
             --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 
@@ -479,7 +555,7 @@ jobs:
           \`\`\`
 
           ### 📄 Software Bill of Materials (SBOM)
-          SBOMs for both images are attached to this release.
+          SBOMs for all three images are attached to this release.
 
           ### ⚠️ Debug Image Warning
           The debug image should **NEVER** be used in production as it includes debugging tools and runs as root.
@@ -491,7 +567,8 @@ jobs:
           name: Release ${{ steps.tag.outputs.tag }}
           body_path: release-body.md
           files: |
-            sbom-output/main_*.json
+            sbom-output/base_*.json
+            sbom-output/glibc_*.json
             sbom-output/debug_*.json
             sbom-changelog.md
             sbom-changes.json

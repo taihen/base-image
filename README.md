@@ -1,12 +1,16 @@
-# Distroless glibc Base Image
+# Distroless Base Images
 
 <div align="center">
   <img src="docs/logo.png" alt="Base Image Logo" width="300">
 </div>
 
-This repository builds, updates, and secures a multi-arch (currently only `x86_64` and `arm64`) **distroless `glibc` Docker base image**. The image is published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`.
+This repository builds, updates, and secures multi-arch (currently only `x86_64` and `arm64`) **distroless Docker base images**. Three variants are published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`:
 
-Images are available with both the `latest` tag and version tags (e.g., `v2025.06.13`) for reproducible builds.
+- **Base image** (`:latest`) - Minimal distroless image with musl libc
+- **glibc image** (`:glibc`) - Includes GNU libc for better compatibility  
+- **Debug image** (`:debug`) - Development variant with shell and debugging tools
+
+All images are available with both convenience tags and version tags (e.g., `v2025.06.13`) for reproducible builds.
 
 This project has been configured to use the Chainguard `apko` toolchain, which is the best-in-class method for building minimal, secure, and reproducible container images.
 
@@ -25,11 +29,16 @@ Modern containerized applications face increasing security threats and complianc
 
 ## Build Process
 
-Instead of a `Dockerfile`, this project uses a declarative [`apko.yaml`](./apko.yaml) file to define the image contents. This file specifies:
+Instead of `Dockerfile`s, this project uses declarative `apko` YAML files to define the image contents:
 
-- The minimal set of packages required from the [Wolfi](https://github.com/wolfi-dev) repository (`glibc`, `ca-certificates-bundle`, etc.).
-- A non-root user (`65532:65532`) for secure execution.
-- The target architectures (`linux/amd64`, `linux/arm64`).
+- **[`base.yaml`](./base.yaml)** - Base distroless image with minimal packages (ca-certificates, tzdata, wolfi-baselayout)
+- **[`glibc.yaml`](./glibc.yaml)** - Extends base.yaml and adds the `glibc` package for compatibility
+- **[`debug.yaml`](./debug.yaml)** - Extends glibc.yaml and adds debugging tools (`wolfi-base` with busybox and apk)
+
+Each configuration specifies:
+- The minimal set of packages required from the [Wolfi](https://github.com/wolfi-dev) repository
+- A non-root user (`65532:65532`) for secure execution (except debug which runs as root)
+- The target architectures (`linux/amd64`, `linux/arm64`)
 
 This declarative approach, inspired by Google Distroless and perfected by Chainguard, ensures the resulting image contains only what is explicitly defined, drastically reducing the attack surface.
 
@@ -46,9 +55,18 @@ This declarative approach, inspired by Google Distroless and perfected by Chaing
   - A high-quality SBOM (Software Bill of Materials) is generated natively by `apko` during the build.
 - **CI/CD:** A streamlined GitHub Actions workflow using [`wolfi-act`](https://github.com/wolfi-dev/wolfi-act) handles the entire build, publish, and sign process in a single, efficient step.
 
-## Debug Image
+## Image Variants
 
-While the main distroless image is designed for production use without a shell or debugging tools, sometimes you need these capabilities during development or troubleshooting. For this purpose, we provide a debug variant of the base image.
+This repository provides three distinct image variants to meet different use cases:
+
+### Base Image (`:latest`)
+The default minimal distroless image with musl libc. This is the most minimal option suitable for statically-linked binaries or applications that don't require glibc.
+
+### glibc Image (`:glibc`)
+Extends the base image with GNU libc for maximum compatibility with dynamically-linked applications that expect glibc. Recommended for most applications requiring C library compatibility.
+
+### Debug Image (`:debug`)
+While the production images are designed for production use without a shell or debugging tools, sometimes you need these capabilities during development or troubleshooting. The debug variant provides these tools.
 
 ### Debug Image Configuration
 
@@ -72,28 +90,36 @@ Use cases for the debug image:
 
 ### Available Image Tags
 
-**Main Production Image:**
-
-- `ghcr.io/taihen/base-image:latest` - Latest production build
+**Base Production Image (musl libc):**
+- `ghcr.io/taihen/base-image:latest` - Latest base image build
 - `ghcr.io/taihen/base-image:v2025.06.13` - Specific version tag
 
-**Debug Development Image:**
+**glibc Production Image (GNU libc):**
+- `ghcr.io/taihen/base-image:glibc` - Latest glibc image build  
+- `ghcr.io/taihen/base-image:v2025.06.13-glibc` - Specific version glibc tag
 
+**Debug Development Image:**
 - `ghcr.io/taihen/base-image:debug` - Latest debug build
 - `ghcr.io/taihen/base-image:v2025.06.13-debug` - Specific version debug tag
 
-### Building the Debug Image Locally
+### Building Images Locally
 
-To build the debug image using apko:
+To build any variant using apko:
 
 ```sh
-# Build for a single architecture
-docker run -v $PWD:/work cgr.dev/chainguard/apko build debug.yaml debug:test debug.tar
+# Build base image (musl libc)
+docker run -v $PWD:/work cgr.dev/chainguard/apko build base.yaml base:test base.tar
+docker load < base.tar
 
-# Load into Docker
+# Build glibc image  
+docker run -v $PWD:/work cgr.dev/chainguard/apko build glibc.yaml glibc:test glibc.tar
+docker load < glibc.tar
+
+# Build debug image
+docker run -v $PWD:/work cgr.dev/chainguard/apko build debug.yaml debug:test debug.tar
 docker load < debug.tar
 
-# Run the debug image
+# Run the debug image interactively
 docker run -it --rm debug:test
 ```
 
@@ -122,9 +148,13 @@ Together, apko and Wolfi provide a secure foundation for building container imag
 
 ## How to Use
 
-You can use this image as a secure and minimal base for your applications. You can use either the `latest` tag for the most recent version or a specific version tag (e.g., `v2025.06.13`) for reproducible builds.
+You can use these images as secure and minimal bases for your applications. Choose the appropriate variant based on your application's requirements:
 
-### Example: Go (CGO-enabled)
+- Use `:latest` for statically-linked binaries or musl libc compatible apps
+- Use `:glibc` for applications that require GNU libc compatibility  
+- Use `:debug` only for development and troubleshooting
+
+### Example: Go Application (CGO-enabled, glibc)
 
 ```dockerfile
 FROM golang:1.23 AS builder
@@ -134,10 +164,27 @@ ARG TARGETARCH
 ENV CGO_ENABLED=1 GOOS=linux GOARCH=$TARGETARCH
 RUN go build -o /hello main.go
 
-# Use latest tag
-FROM ghcr.io/taihen/base-image:latest
+# Use glibc variant for CGO-enabled applications
+FROM ghcr.io/taihen/base-image:glibc
 # OR use a specific version for reproducible builds
-# FROM ghcr.io/taihen/base-image:v2025.06.13
+# FROM ghcr.io/taihen/base-image:v2025.06.13-glibc
+COPY --from=builder /hello /hello
+USER 65532:65532
+ENTRYPOINT ["/hello"]
+```
+
+### Example: Static Binary (musl libc)
+
+```dockerfile  
+FROM golang:1.23-alpine AS builder
+WORKDIR /src
+COPY main.go .
+ARG TARGETARCH
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH
+RUN go build -ldflags="-s -w" -o /hello main.go
+
+# Use base variant for static binaries
+FROM ghcr.io/taihen/base-image:latest
 COPY --from=builder /hello /hello
 USER 65532:65532
 ENTRYPOINT ["/hello"]
@@ -153,7 +200,8 @@ RUN javac Hello.java
 RUN echo "Main-Class: Hello" > manifest.txt && jar cfm hello.jar manifest.txt Hello.class
 RUN $JAVA_HOME/bin/jlink --add-modules java.base --strip-debug --no-man-pages --no-header-files --compress=2 --output /jre
 
-FROM ghcr.io/taihen/base-image:latest
+# Use glibc variant for Java applications  
+FROM ghcr.io/taihen/base-image:glibc
 COPY --from=builder /jre /jre
 COPY --from=builder /app/hello.jar /app/hello.jar
 ENTRYPOINT ["/jre/bin/java", "-jar", "/app/hello.jar"]
@@ -221,14 +269,15 @@ To build the image locally, you need Docker with BuildKit enabled.
 
 ## Automation
 
-The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process for both production and debug images. It is triggered on:
+The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process for all three image variants. It is triggered on:
 
 - A `push` to the `main` branch.
 - A daily schedule (`cron: "0 5 * * *"`) to ensure images are kept up-to-date with upstream packages.
 
-The workflow builds both image variants in parallel and applies the following tagging strategy:
+The workflow builds all three image variants in parallel and applies the following tagging strategy:
 
-- **Production images**: Tagged with `latest` and version tags (e.g., `v2025.06.13`)
+- **Base images**: Tagged with `latest` and version tags (e.g., `v2025.06.13`)
+- **glibc images**: Tagged with `glibc` and version-glibc tags (e.g., `v2025.06.13-glibc`)
 - **Debug images**: Tagged with `debug` and version-debug tags (e.g., `v2025.06.13-debug`)
 
 ## Automatic Release System
@@ -279,19 +328,19 @@ Each release creates:
 
 ## Automated Testing
 
-Before creating a release, the workflow runs comprehensive tests to ensure both the production and debug images work correctly:
+Before creating a release, the workflow runs comprehensive tests to ensure all three image variants work correctly:
 
 ### Test Suite
 
-1. **Go Application Test**: Builds and runs a hello world Go application on both image variants
-   - Verifies CGO compatibility (glibc linkage)
+1. **Go Application Test**: Builds and runs a hello world Go application on all three image variants
+   - Verifies glibc/musl compatibility as appropriate
    - Tests both `linux/amd64` and `linux/arm64` architectures
-   - Confirms correct user execution (UID 65532 for production, UID 0 for debug)
+   - Confirms correct user execution (UID 65532 for production variants, UID 0 for debug)
    - Validates environment variable handling
 
-2. **Multi-Platform Build Test**: Ensures both images work correctly in multi-architecture builds
+2. **Multi-Platform Build Test**: Ensures all images work correctly in multi-architecture builds
 
-3. **Security Scan**: Runs Trivy to scan both image variants for vulnerabilities and reports any critical or high-severity issues
+3. **Security Scan**: Runs Trivy to scan all image variants for vulnerabilities and reports any critical or high-severity issues
 
 ### Test Failure Handling
 

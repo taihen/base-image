@@ -1,0 +1,14 @@
+# This file defines a glibc version of the base image.
+# It includes glibc for applications that require glibc compatibility.
+include: base.yaml
+contents:
+  packages: [glibc]
+# Keep the non-root user from base.yaml
+# Distroless image has no shell or entrypoint
+entrypoint: {}
+annotations:
+  org.opencontainers.image.authors: taihen.build@gmail.com
+  org.opencontainers.image.url: https://github.com/taihen/base-image
+  org.opencontainers.image.source: https://github.com/taihen/base-image
+  org.opencontainers.image.title: Distroless glibc Base Image
+  org.opencontainers.image.description: A minimal, multi-arch glibc base image.

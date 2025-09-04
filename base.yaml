@@ -1,8 +1,8 @@
-# This file defines a minimal, multi-arch glibc base image using apko.
+# This file defines a minimal, multi-arch base image using apko.
 # It is inspired by the principles of Google Distroless and Chainguard Images.
 # For more information on apko, see: https://github.com/chainguard-dev/apko
 #
-# A minimal set of packages for a glibc-based "distroless" image:
+# A minimal set of packages for a "distroless" image:
 #
 # - wolfi-baselayout - is the basic layout of the container filesystem, sets
 # up directory structure and permissions for paths, sets root password as
@@ -13,11 +13,10 @@
 #
 # - ca-certificates-bundle - these are the cert chains for ssl connections
 # - tzdata - is the data with which timezones are used by the OS
-# - glibc - is the libc library for the OS
 contents:
   repositories: ['https://packages.wolfi.dev/os']
   keyring: ['https://packages.wolfi.dev/os/wolfi-signing.rsa.pub']
-  packages: [ca-certificates-bundle, tzdata, wolfi-baselayout, glibc]
+  packages: [ca-certificates-bundle, tzdata, wolfi-baselayout]
 environment:
   PATH: /usr/sbin:/sbin:/usr/bin:/bin
 # Set up a non-root user and group, and run as that user.
@@ -42,5 +41,5 @@ annotations:
   org.opencontainers.image.authors: taihen.build@gmail.com
   org.opencontainers.image.url: https://github.com/taihen/base-image
   org.opencontainers.image.source: https://github.com/taihen/base-image
-  org.opencontainers.image.title: Distroless glibc Base Image
-  org.opencontainers.image.description: A minimal, multi-arch glibc base image.
+  org.opencontainers.image.title: Distroless Base Image
+  org.opencontainers.image.description: A minimal, multi-arch base image.

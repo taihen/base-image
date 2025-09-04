@@ -1,7 +1,7 @@
 # This file defines a debug image for the apko base image.
 # It is used to test the apko base image and its contents.
 # wolfi-base is a mate package which adds busybox and apk-tools to the container.
-include: apko.yaml
+include: glibc.yaml
 contents:
   packages: [wolfi-base]
 accounts:
@@ -13,5 +13,5 @@ annotations:
   org.opencontainers.image.authors: taihen.build@gmail.com
   org.opencontainers.image.url: https://github.com/taihen/base-image
   org.opencontainers.image.source: https://github.com/taihen/base-image
-  org.opencontainers.image.title: Distroless glibc Debug Image
-  org.opencontainers.image.description: A minimal, multi-arch glibc debug image.
+  org.opencontainers.image.title: Distroless Debug Image
+  org.opencontainers.image.description: A minimal, multi-arch debug image with shell and debugging tools.
