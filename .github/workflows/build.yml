@@ -267,33 +267,33 @@ jobs:
           # Clean up temporary files
           rm -f base-digest.txt glibc-digest.txt debug-digest.txt
       - name: Upload current base digest artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: previous-base-digest
           path: current-base-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload current glibc digest artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: previous-glibc-digest
           path: current-glibc-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload current debug digest artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: previous-debug-digest
           path: current-debug-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sbom
           path: sbom-output/
       - name: Upload SBOM for future comparisons
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: previous-sbom
           path: sbom-output/
@@ -467,7 +467,7 @@ jobs:
           pip install requests
           python3 scripts/generate_changelog.py
       - name: Upload SBOM changelog artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sbom-changelog
           path: |
