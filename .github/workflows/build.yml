@@ -451,7 +451,7 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Generated tag: $TAG"
       - name: Download SBOM artifact
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           name: sbom
           path: sbom-output
