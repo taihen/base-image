@@ -561,7 +561,7 @@ jobs:
           The debug image should **NEVER** be used in production as it includes debugging tools and runs as root.
           RELEASE_EOF
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Release ${{ steps.tag.outputs.tag }}
