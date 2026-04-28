@@ -167,69 +167,78 @@ jobs:
             echo "glibc-digest=" >> $GITHUB_OUTPUT
             echo "debug-digest=" >> $GITHUB_OUTPUT
           fi
-      - name: Build, Publish, and Sign with wolfi-act
+      - name: Install apko
+        env:
+          APKO_VERSION: 1.2.8
+          APKO_SHA256: 66f0383c66d29f1ca40ff8b0c876579afed356fd157009ef16a20f41301b0ac5
+        run: |
+          set -e
+          tmp=$(mktemp -d)
+          apko_archive="apko_${APKO_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/v${APKO_VERSION}/${apko_archive}" \
+            -o "$tmp/${apko_archive}"
+          echo "${APKO_SHA256}  $tmp/${apko_archive}" | sha256sum -c -
+          tar -xzf "$tmp/${apko_archive}" -C "$tmp"
+          sudo install -m 0755 "$tmp/apko_${APKO_VERSION}_linux_amd64/apko" /usr/local/bin/apko
+          rm -rf "$tmp"
+          apko version
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: v3.0.6
+      - name: Build, publish, and sign images
         id: build
-        uses: wolfi-dev/wolfi-act@main
         env:
           COSIGN_EXPERIMENTAL: '1'
           OCI_HOST: ghcr.io
           OCI_REPO: ${{ github.repository }}
-        with:
-          packages: apko,cosign
-          command: |
-            set -e
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
 
-            # Log in to the GitHub Container Registry
-            echo "${{ secrets.GITHUB_TOKEN }}" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
+          echo "$GITHUB_TOKEN" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
 
-            # Create directories for the SBOMs
-            mkdir -p sbom-base sbom-glibc sbom-debug
-            
-            echo "Building base image (latest)..."
-            # Publish the base multi-arch image using apko, which also generates an SBOM.
-            base_digest=$(apko publish base.yaml "$OCI_HOST/$OCI_REPO" \
-              --sbom-path=sbom-base)
-            
-            echo "Building glibc image..."
-            # Publish the glibc multi-arch image using apko, which also generates an SBOM.
-            glibc_digest=$(apko publish glibc.yaml "$OCI_HOST/$OCI_REPO:glibc" \
-              --sbom-path=sbom-glibc)
-            
-            echo "Building debug image..."
-            # Publish the debug multi-arch image using apko, which also generates an SBOM.
-            debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
-              --sbom-path=sbom-debug)
+          mkdir -p sbom-base sbom-glibc sbom-debug
 
-            # Consolidate SBOMs into a single output directory
-            mkdir -p sbom-output
-            for f in sbom-base/*.json; do
-              if [ -f "$f" ]; then
-                cp "$f" "sbom-output/base_$(basename "$f")"
-              fi
-            done
-            for f in sbom-glibc/*.json; do
-              if [ -f "$f" ]; then
-                cp "$f" "sbom-output/glibc_$(basename "$f")"
-              fi
-            done
-            for f in sbom-debug/*.json; do
-              if [ -f "$f" ]; then
-                cp "$f" "sbom-output/debug_$(basename "$f")"
-              fi
-            done
+          echo "Building base image (latest)..."
+          base_digest=$(apko publish base.yaml "$OCI_HOST/$OCI_REPO" \
+            --sbom-path=sbom-base)
 
-            # Sign all three image digests using Cosign keyless signing.
-            echo "Signing base image..."
-            cosign sign --yes "$base_digest"
-            echo "Signing glibc image..."
-            cosign sign --yes "$glibc_digest"
-            echo "Signing debug image..."
-            cosign sign --yes "$debug_digest"
+          echo "Building glibc image..."
+          glibc_digest=$(apko publish glibc.yaml "$OCI_HOST/$OCI_REPO:glibc" \
+            --sbom-path=sbom-glibc)
 
-            # Save the digests to files that can be read outside the container
-            echo "$base_digest" > base-digest.txt
-            echo "$glibc_digest" > glibc-digest.txt
-            echo "$debug_digest" > debug-digest.txt
+          echo "Building debug image..."
+          debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
+            --sbom-path=sbom-debug)
+
+          mkdir -p sbom-output
+          for f in sbom-base/*.json; do
+            if [ -f "$f" ]; then
+              cp "$f" "sbom-output/base_$(basename "$f")"
+            fi
+          done
+          for f in sbom-glibc/*.json; do
+            if [ -f "$f" ]; then
+              cp "$f" "sbom-output/glibc_$(basename "$f")"
+            fi
+          done
+          for f in sbom-debug/*.json; do
+            if [ -f "$f" ]; then
+              cp "$f" "sbom-output/debug_$(basename "$f")"
+            fi
+          done
+
+          echo "Signing base image..."
+          cosign sign --yes "$base_digest"
+          echo "Signing glibc image..."
+          cosign sign --yes "$glibc_digest"
+          echo "Signing debug image..."
+          cosign sign --yes "$debug_digest"
+
+          echo "$base_digest" > base-digest.txt
+          echo "$glibc_digest" > glibc-digest.txt
+          echo "$debug_digest" > debug-digest.txt
       - name: Extract digests
         id: extract-digest
         run: |
@@ -474,35 +483,32 @@ jobs:
             sbom-changelog.md
             sbom-changes.json
           retention-days: 90
-      - name: Tag images with release version using wolfi-act
-        uses: wolfi-dev/wolfi-act@main
-        env:
-          OCI_HOST: ghcr.io
-          OCI_REPO: ${{ github.repository }}
+      - name: Install crane
+        uses: imjasonh/setup-crane@6da1ae018866400525525ce74ff892880c099987 # v0.5
         with:
-          packages: crane
-          command: |
-            set -e
+          version: v0.21.5
+      - name: Tag images with release version
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          BASE_DIGEST: ${{ needs.build.outputs.base-digest }}
+          GLIBC_DIGEST: ${{ needs.build.outputs.glibc-digest }}
+          DEBUG_DIGEST: ${{ needs.build.outputs.debug-digest }}
+        run: |
+          set -e
 
-            # Log in to the GitHub Container Registry
-            echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
-            TAG="${{ steps.tag.outputs.tag }}"
+          crane tag "$BASE_DIGEST" "$TAG"
+          crane tag "$BASE_DIGEST" "latest"
 
-            # Tag base image with version and latest
-            crane tag "${{ needs.build.outputs.base-digest }}" "$TAG"
-            crane tag "${{ needs.build.outputs.base-digest }}" "latest"
+          crane tag "$GLIBC_DIGEST" "$TAG-glibc"
+          crane tag "$GLIBC_DIGEST" "glibc"
 
-            # Tag glibc image with version-glibc and glibc
-            crane tag "${{ needs.build.outputs.glibc-digest }}" "$TAG-glibc"
-            crane tag "${{ needs.build.outputs.glibc-digest }}" "glibc"
+          crane tag "$DEBUG_DIGEST" "$TAG-debug"
+          crane tag "$DEBUG_DIGEST" "debug"
 
-            # Tag debug image with version-debug and debug
-            crane tag "${{ needs.build.outputs.debug-digest }}" "$TAG-debug"
-            crane tag "${{ needs.build.outputs.debug-digest }}" "debug"
-            echo "Successfully tagged images:"
-            echo "Base: $TAG, latest"
-            echo "glibc: $TAG-glibc, glibc"
-            echo "Debug: $TAG-debug, debug"
+          echo "Successfully tagged images:"
+          echo "Base: $TAG, latest"
+          echo "glibc: $TAG-glibc, glibc"
+          echo "Debug: $TAG-debug, debug"
       - name: Create release body
         run: |
           # Read the SBOM changelog
