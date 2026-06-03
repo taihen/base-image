@@ -484,7 +484,7 @@ jobs:
             sbom-changes.json
           retention-days: 90
       - name: Install crane
-        uses: imjasonh/setup-crane@6da1ae018866400525525ce74ff892880c099987 # v0.5
+        uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
         with:
           version: v0.21.5
       - name: Tag images with release version
