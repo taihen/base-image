@@ -16,12 +16,15 @@ on:
         type: string
 
 jobs:
+  # Publishes images under ephemeral run-scoped tags only. Floating tags
+  # (latest/glibc/debug), signatures and attestations are applied by the
+  # promote job after the test job has passed, so an unscanned image is
+  # never reachable through a consumable tag.
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write
     outputs:
       base-digest: ${{ steps.extract-digest.outputs.base-digest }}
       glibc-digest: ${{ steps.extract-digest.outputs.glibc-digest }}
@@ -29,11 +32,11 @@ jobs:
       has-changes: ${{ steps.compare.outputs.has-changes }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # When called by another workflow, use the ref it provides.
           # Otherwise, use the default ref for the event (e.g., main branch).
-          ref: ${{ github.event.inputs.ref || github.ref }}
+          ref: ${{ inputs.ref || github.ref }}
       - name: Get previous digest and SBOM from last successful run
         id: previous
         env:
@@ -169,8 +172,8 @@ jobs:
           fi
       - name: Install apko
         env:
-          APKO_VERSION: 1.2.8
-          APKO_SHA256: 66f0383c66d29f1ca40ff8b0c876579afed356fd157009ef16a20f41301b0ac5
+          APKO_VERSION: 1.2.25
+          APKO_SHA256: b5a480cfb32458f55d1f1513a902f6cdf7dc284b9e6fe9840abdbcebc3908d47
         run: |
           set -e
           tmp=$(mktemp -d)
@@ -182,34 +185,47 @@ jobs:
           sudo install -m 0755 "$tmp/apko_${APKO_VERSION}_linux_amd64/apko" /usr/local/bin/apko
           rm -rf "$tmp"
           apko version
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-        with:
-          cosign-release: v3.0.6
-      - name: Build, publish, and sign images
+      - name: Build and publish images (ephemeral tags, unsigned)
         id: build
         env:
-          COSIGN_EXPERIMENTAL: '1'
           OCI_HOST: ghcr.io
           OCI_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
 
+          # Reproducible image timestamps tied to the commit, not epoch 0
+          # (epoch 0 trips freshness checks) and not wall clock (breaks
+          # byte-reproducibility).
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
+
           echo "$GITHUB_TOKEN" | apko login "$OCI_HOST" -u "${{ github.actor }}" --password-stdin
 
           mkdir -p sbom-base sbom-glibc sbom-debug
 
-          echo "Building base image (latest)..."
-          base_digest=$(apko publish base.yaml "$OCI_HOST/$OCI_REPO" \
+          # Run-scoped tags keep unscanned images out of every consumable
+          # tag; the promote job moves latest/glibc/debug after tests pass.
+          EPHEMERAL_PREFIX="$OCI_HOST/$OCI_REPO:build-${{ github.run_id }}"
+          REVISION_ANNOTATION="org.opencontainers.image.revision:${{ github.sha }}"
+
+          echo "Building base image..."
+          base_digest=$(apko publish base.yaml "$EPHEMERAL_PREFIX-base" \
+            --lockfile base.lock.json \
+            --annotations "$REVISION_ANNOTATION" \
             --sbom-path=sbom-base)
 
           echo "Building glibc image..."
-          glibc_digest=$(apko publish glibc.yaml "$OCI_HOST/$OCI_REPO:glibc" \
+          glibc_digest=$(apko publish glibc.yaml "$EPHEMERAL_PREFIX-glibc" \
+            --lockfile glibc.lock.json \
+            --annotations "$REVISION_ANNOTATION" \
             --sbom-path=sbom-glibc)
 
           echo "Building debug image..."
-          debug_digest=$(apko publish debug.yaml "$OCI_HOST/$OCI_REPO:debug" \
+          debug_digest=$(apko publish debug.yaml "$EPHEMERAL_PREFIX-debug" \
+            --lockfile debug.lock.json \
+            --annotations "$REVISION_ANNOTATION" \
             --sbom-path=sbom-debug)
 
           mkdir -p sbom-output
@@ -229,16 +245,11 @@ jobs:
             fi
           done
 
-          echo "Signing base image..."
-          cosign sign --yes "$base_digest"
-          echo "Signing glibc image..."
-          cosign sign --yes "$glibc_digest"
-          echo "Signing debug image..."
-          cosign sign --yes "$debug_digest"
-
-          echo "$base_digest" > base-digest.txt
-          echo "$glibc_digest" > glibc-digest.txt
-          echo "$debug_digest" > debug-digest.txt
+          # Normalize to canonical repo@sha256 refs so the ephemeral tag
+          # never leaks into signatures, attestations, or release notes.
+          echo "$OCI_HOST/$OCI_REPO@${base_digest##*@}" > base-digest.txt
+          echo "$OCI_HOST/$OCI_REPO@${glibc_digest##*@}" > glibc-digest.txt
+          echo "$OCI_HOST/$OCI_REPO@${debug_digest##*@}" > debug-digest.txt
       - name: Extract digests
         id: extract-digest
         run: |
@@ -276,33 +287,33 @@ jobs:
           # Clean up temporary files
           rm -f base-digest.txt glibc-digest.txt debug-digest.txt
       - name: Upload current base digest artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: previous-base-digest
           path: current-base-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload current glibc digest artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: previous-glibc-digest
           path: current-glibc-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload current debug digest artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: previous-debug-digest
           path: current-debug-digest/digest.txt
           retention-days: 7
           overwrite: true
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
           path: sbom-output/
       - name: Upload SBOM for future comparisons
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: previous-sbom
           path: sbom-output/
@@ -320,19 +331,19 @@ jobs:
         variant: [base, glibc, debug]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
         with:
           platforms: linux/arm64,linux/amd64
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       - name: Set test configuration
         id: test-config
         run: |
@@ -427,7 +438,7 @@ jobs:
             -e TEST_VAR="Hello from ${{ matrix.variant }} test" \
             test-app:arm64
       - name: Security scan with Trivy for ${{ matrix.variant }}
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.test-config.outputs.base-image }}
           format: table
@@ -435,16 +446,110 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           severity: CRITICAL,HIGH
+  # Runs only after tests (including the Trivy scan) pass: signs images,
+  # attaches SBOM and SLSA provenance attestations, then moves the floating
+  # tags. Skipped for PR validation runs.
+  promote:
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Install crane
+        uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
+        with:
+          version: v0.21.5
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download SBOM artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sbom
+          path: sbom-output
+      - name: Sign images and attest SBOMs
+        env:
+          BASE_DIGEST: ${{ needs.build.outputs.base-digest }}
+          GLIBC_DIGEST: ${{ needs.build.outputs.glibc-digest }}
+          DEBUG_DIGEST: ${{ needs.build.outputs.debug-digest }}
+        run: |
+          set -e
+          for variant in base glibc debug; do
+            case "$variant" in
+              base) digest="$BASE_DIGEST" ;;
+              glibc) digest="$GLIBC_DIGEST" ;;
+              debug) digest="$DEBUG_DIGEST" ;;
+            esac
+            sbom="sbom-output/${variant}_sbom-index.spdx.json"
+            if [ ! -s "$sbom" ]; then
+              echo "ERROR: missing or empty SBOM predicate: $sbom"
+              exit 1
+            fi
+            echo "Signing $variant image..."
+            cosign sign --yes "$digest"
+            echo "Attesting SBOM for $variant image..."
+            cosign attest --yes --type spdxjson --predicate "$sbom" "$digest"
+          done
+      - name: Extract bare digests
+        id: digests
+        env:
+          BASE_DIGEST: ${{ needs.build.outputs.base-digest }}
+          GLIBC_DIGEST: ${{ needs.build.outputs.glibc-digest }}
+          DEBUG_DIGEST: ${{ needs.build.outputs.debug-digest }}
+        run: |
+          echo "base-sha=${BASE_DIGEST##*@}" >> $GITHUB_OUTPUT
+          echo "glibc-sha=${GLIBC_DIGEST##*@}" >> $GITHUB_OUTPUT
+          echo "debug-sha=${DEBUG_DIGEST##*@}" >> $GITHUB_OUTPUT
+      - name: Attest build provenance (base)
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digests.outputs.base-sha }}
+          push-to-registry: true
+      - name: Attest build provenance (glibc)
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digests.outputs.glibc-sha }}
+          push-to-registry: true
+      - name: Attest build provenance (debug)
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.digests.outputs.debug-sha }}
+          push-to-registry: true
+      - name: Promote floating tags
+        env:
+          BASE_DIGEST: ${{ needs.build.outputs.base-digest }}
+          GLIBC_DIGEST: ${{ needs.build.outputs.glibc-digest }}
+          DEBUG_DIGEST: ${{ needs.build.outputs.debug-digest }}
+        run: |
+          set -e
+          crane tag "$BASE_DIGEST" "latest"
+          crane tag "$GLIBC_DIGEST" "glibc"
+          crane tag "$DEBUG_DIGEST" "debug"
+          echo "Promoted floating tags: latest, glibc, debug"
   release:
     if: (github.event_name == 'push' || github.event_name == 'schedule') && needs.build.outputs.has-changes == 'true'
-    needs: [build, test]
+    needs: [build, test, promote]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Generate release tag
         id: tag
         run: |
@@ -460,7 +565,7 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Generated tag: $TAG"
       - name: Download SBOM artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: sbom
           path: sbom-output
@@ -476,7 +581,7 @@ jobs:
           pip install requests
           python3 scripts/generate_changelog.py
       - name: Upload SBOM changelog artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-changelog
           path: |
@@ -497,18 +602,13 @@ jobs:
           set -e
 
           crane tag "$BASE_DIGEST" "$TAG"
-          crane tag "$BASE_DIGEST" "latest"
-
           crane tag "$GLIBC_DIGEST" "$TAG-glibc"
-          crane tag "$GLIBC_DIGEST" "glibc"
-
           crane tag "$DEBUG_DIGEST" "$TAG-debug"
-          crane tag "$DEBUG_DIGEST" "debug"
 
           echo "Successfully tagged images:"
-          echo "Base: $TAG, latest"
-          echo "glibc: $TAG-glibc, glibc"
-          echo "Debug: $TAG-debug, debug"
+          echo "Base: $TAG"
+          echo "glibc: $TAG-glibc"
+          echo "Debug: $TAG-debug"
       - name: Create release body
         run: |
           # Read the SBOM changelog
@@ -522,20 +622,20 @@ jobs:
           DEBUG_DIGEST="${{ needs.build.outputs.debug-digest }}"
           cat > release-body.md << RELEASE_EOF
           ## 🚀 Automated Release
-          This release includes all three image variants: base (musl), glibc, and debug.
+          This release includes all three image variants: base (static, no libc), glibc, and debug.
           $SBOM_CHANGELOG
 
           ### 📦 Container Images
-          **Base Image (Production - musl libc)**
+          **Base Image (Production - static, no libc)**
           - **Image**: \`ghcr.io/${REPO}:latest\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}\`
           - **Digest**: \`${BASE_DIGEST}\`
-          
+
           **glibc Image (Production - GNU libc)**
           - **Image**: \`ghcr.io/${REPO}:glibc\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}-glibc\`
           - **Digest**: \`${GLIBC_DIGEST}\`
-          
+
           **Debug Image (Development)**
           - **Image**: \`ghcr.io/${REPO}:debug\`
           - **Tagged Version**: \`ghcr.io/${REPO}:${TAG}-debug\`
@@ -560,6 +660,18 @@ jobs:
             --certificate-oidc-issuer=https://token.actions.githubusercontent.com
           \`\`\`
 
+          Each image also carries a signed SPDX SBOM attestation and SLSA
+          build provenance:
+          \`\`\`bash
+          # SBOM attestation
+          cosign verify-attestation ${BASE_DIGEST} --type spdxjson \\
+            --certificate-identity=https://github.com/${REPO}/.github/workflows/build.yml@refs/heads/main \\
+            --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+
+          # SLSA build provenance
+          gh attestation verify oci://${BASE_DIGEST} --repo ${REPO}
+          \`\`\`
+
           ### 📄 Software Bill of Materials (SBOM)
           SBOMs for all three images are attached to this release.
 
@@ -567,7 +679,7 @@ jobs:
           The debug image should **NEVER** be used in production as it includes debugging tools and runs as root.
           RELEASE_EOF
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Release ${{ steps.tag.outputs.tag }}
@@ -581,4 +693,3 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: false
-  
