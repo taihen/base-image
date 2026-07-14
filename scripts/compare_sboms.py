@@ -2,6 +2,8 @@ import json
 import os
 import sys
 
+VARIANTS = ['base', 'glibc', 'debug']
+
 def get_sbom_files(directory, prefix):
     sbom_files = []
     if not os.path.exists(directory):
@@ -14,6 +16,9 @@ def get_sbom_files(directory, prefix):
     return sbom_files
 
 def parse_sboms(paths):
+    # apko emits SPDX SBOMs: package entries live under 'packages' with
+    # 'versionInfo'. The index SBOM has no package list and contributes
+    # nothing here; per-arch SBOMs carry the actual packages.
     packages = {}
     for path in paths:
         if not os.path.exists(path):
@@ -21,80 +26,53 @@ def parse_sboms(paths):
         with open(path, 'r') as f:
             try:
                 sbom = json.load(f)
-                # Support both 'components' (new) and 'packages' (old)
-                component_list = sbom.get('components')
-                if component_list is None:
-                    component_list = sbom.get('packages')
-                
-                if component_list:
-                    for component in component_list:
-                        name = component.get('name', 'unknown')
-                        # Support both 'version' (new) and 'versionInfo' (old)
-                        version = component.get('version')
-                        if version is None:
-                            version = component.get('versionInfo', 'unknown')
-                        packages[name] = version
             except json.JSONDecodeError:
                 print(f"Warning: Could not decode JSON from {path}")
+                continue
+        for package in sbom.get('packages') or []:
+            name = package.get('name', 'unknown')
+            packages[name] = package.get('versionInfo', 'unknown')
     return packages
 
 def compare_packages(old_pkgs, new_pkgs):
-    if not old_pkgs and not new_pkgs:
-        return False
-    if not old_pkgs and new_pkgs:
+    if not old_pkgs:
         print("No previous SBOM found. Assuming changes.")
         return True
     return old_pkgs != new_pkgs
 
 def main():
-    # Check for both old (main) and new (base) naming
-    prev_base_files = get_sbom_files('previous-sbom', 'base_')
-    prev_main_files = get_sbom_files('previous-sbom', 'main_')  # backward compatibility
-    prev_glibc_files = get_sbom_files('previous-sbom', 'glibc_')
-    prev_debug_files = get_sbom_files('previous-sbom', 'debug_')
-    
-    curr_base_files = get_sbom_files('sbom-output', 'base_')
-    curr_glibc_files = get_sbom_files('sbom-output', 'glibc_')
-    curr_debug_files = get_sbom_files('sbom-output', 'debug_')
-    
-    print(f"Previous base SBOMs: {prev_base_files}")
-    print(f"Previous main SBOMs: {prev_main_files}")
-    print(f"Previous glibc SBOMs: {prev_glibc_files}")
-    print(f"Previous debug SBOMs: {prev_debug_files}")
-    print(f"Current base SBOMs: {curr_base_files}")
-    print(f"Current glibc SBOMs: {curr_glibc_files}")
-    print(f"Current debug SBOMs: {curr_debug_files}")
-    
-    # Parse previous packages (use main_ files as fallback for base if no base_ files exist)
-    prev_base_pkgs = parse_sboms(prev_base_files if prev_base_files else prev_main_files)
-    prev_glibc_pkgs = parse_sboms(prev_glibc_files)
-    prev_debug_pkgs = parse_sboms(prev_debug_files)
-    
-    # Parse current packages
-    curr_base_pkgs = parse_sboms(curr_base_files)
-    curr_glibc_pkgs = parse_sboms(curr_glibc_files)
-    curr_debug_pkgs = parse_sboms(curr_debug_files)
-    
-    # Compare packages
-    base_changed = compare_packages(prev_base_pkgs, curr_base_pkgs)
-    glibc_changed = compare_packages(prev_glibc_pkgs, curr_glibc_pkgs)
-    debug_changed = compare_packages(prev_debug_pkgs, curr_debug_pkgs)
-    
-    if base_changed:
-        print("Base SBOM has changes.")
-    if glibc_changed:
-        print("glibc SBOM has changes.")
-    if debug_changed:
-        print("Debug SBOM has changes.")
-    
-    if base_changed or glibc_changed or debug_changed:
+    changed = False
+    for variant in VARIANTS:
+        curr_files = get_sbom_files('sbom-output', f'{variant}_')
+        prev_files = get_sbom_files('previous-sbom', f'{variant}_')
+        if variant == 'base' and not prev_files:
+            # backward compatibility with the old 'main_' prefix
+            prev_files = get_sbom_files('previous-sbom', 'main_')
+
+        print(f"Previous {variant} SBOMs: {prev_files}")
+        print(f"Current {variant} SBOMs: {curr_files}")
+
+        # Fail closed: a missing or empty current SBOM is a build defect,
+        # not "no change".
+        if not curr_files:
+            print(f"ERROR: no current SBOM files found for {variant}.")
+            sys.exit(1)
+        curr_pkgs = parse_sboms(curr_files)
+        if not curr_pkgs:
+            print(f"ERROR: current {variant} SBOMs contain no packages.")
+            sys.exit(1)
+
+        prev_pkgs = parse_sboms(prev_files)
+        if compare_packages(prev_pkgs, curr_pkgs):
+            print(f"{variant} SBOM has changes.")
+            changed = True
+
+    if changed:
         print("Changes detected in SBOMs.")
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write('sbom-changes=true\n')
     else:
         print("No changes detected in SBOMs.")
-        with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-            f.write('sbom-changes=false\n')
+    with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+        f.write(f"sbom-changes={'true' if changed else 'false'}\n")
 
 if __name__ == "__main__":
     main()
