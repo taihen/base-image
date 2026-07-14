@@ -6,7 +6,7 @@
 
 This repository builds, updates, and secures multi-arch (currently only `x86_64` and `arm64`) **distroless Docker base images**. Three variants are published to GitHub Container Registry (GHCR) at `ghcr.io/taihen/base-image`:
 
-- **Base image** (`:latest`) - Minimal distroless image with musl libc
+- **Base image** (`:latest`) - Minimal distroless image with no libc, for statically-linked binaries
 - **glibc image** (`:glibc`) - Includes GNU libc for better compatibility  
 - **Debug image** (`:debug`) - Development variant with shell and debugging tools
 
@@ -20,7 +20,7 @@ Curious about distroless, checkout my [blog post](https://taihen.org/posts/distr
 
 Modern containerized applications face increasing security threats and compliance requirements. Traditional base images often include unnecessary packages, tools, and potential vulnerabilities that expand your attack surface. A secure and simple base image is essential because:
 
-- **Reduced Attack Surface**: By including only the bare minimum required to run your application (glibc and ca-certificates), there are fewer components that could contain vulnerabilities
+- **Reduced Attack Surface**: By including only the bare minimum required to run your application (CA certificates, timezone data, and optionally glibc), there are fewer components that could contain vulnerabilities
 - **Compliance**: Many security standards and regulations require minimizing unnecessary software in production environments
 - **Smaller Images**: Minimal images mean faster pulls, reduced storage costs, and quicker deployments
 - **No Shell or Package Manager**: Without these tools, attackers have fewer options if they manage to breach your container
@@ -52,15 +52,17 @@ This declarative approach, inspired by Google Distroless and perfected by Chaing
   - Runs as a non-root user (`65532:65532`).
   - Automatically rebuilt daily to incorporate the latest security patches from upstream packages.
   - Images are signed with Cosign using keyless signing.
-  - A high-quality SBOM (Software Bill of Materials) is generated natively by `apko` during the build.
-- **CI/CD:** A streamlined GitHub Actions workflow using [`wolfi-act`](https://github.com/wolfi-dev/wolfi-act) handles the entire build, publish, and sign process in a single, efficient step.
+  - A high-quality SBOM (Software Bill of Materials) is generated natively by `apko` during the build and attached to each image as a signed in-registry attestation (`cosign attest --type spdxjson`).
+  - SLSA build provenance is attached to each image via GitHub artifact attestations.
+- **Reproducible:** Package versions are pinned in committed `apko lock` files (`base.lock.json`, `glibc.lock.json`, `debug.lock.json`) and image timestamps derive from the commit date (`SOURCE_DATE_EPOCH`), so rebuilding the same commit yields the same image. A daily workflow opens a PR when Wolfi package versions move.
+- **CI/CD:** A GitHub Actions workflow builds and publishes images under ephemeral run-scoped tags, tests and vulnerability-scans them, and only then signs, attests, and promotes the floating tags (`latest`, `glibc`, `debug`). An unscanned image is never reachable through a consumable tag.
 
 ## Image Variants
 
 This repository provides three distinct image variants to meet different use cases:
 
 ### Base Image (`:latest`)
-The default minimal distroless image with musl libc. This is the most minimal option suitable for statically-linked binaries or applications that don't require glibc.
+The default minimal distroless image. It ships no libc at all, making it the most minimal option, suitable for statically-linked binaries.
 
 ### glibc Image (`:glibc`)
 Extends the base image with GNU libc for maximum compatibility with dynamically-linked applications that expect glibc. Recommended for most applications requiring C library compatibility.
@@ -90,7 +92,7 @@ Use cases for the debug image:
 
 ### Available Image Tags
 
-**Base Production Image (musl libc):**
+**Base Production Image (static, no libc):**
 - `ghcr.io/taihen/base-image:latest` - Latest base image build
 - `ghcr.io/taihen/base-image:v2025.06.13` - Specific version tag
 
@@ -107,7 +109,7 @@ Use cases for the debug image:
 To build any variant using apko:
 
 ```sh
-# Build base image (musl libc)
+# Build base image (static, no libc)
 docker run -v $PWD:/work cgr.dev/chainguard/apko build base.yaml base:test base.tar
 docker load < base.tar
 
@@ -150,7 +152,7 @@ Together, apko and Wolfi provide a secure foundation for building container imag
 
 You can use these images as secure and minimal bases for your applications. Choose the appropriate variant based on your application's requirements:
 
-- Use `:latest` for statically-linked binaries or musl libc compatible apps
+- Use `:latest` for statically-linked binaries
 - Use `:glibc` for applications that require GNU libc compatibility  
 - Use `:debug` only for development and troubleshooting
 
@@ -173,7 +175,7 @@ USER 65532:65532
 ENTRYPOINT ["/hello"]
 ```
 
-### Example: Static Binary (musl libc)
+### Example: Static Binary (no libc)
 
 ```dockerfile  
 FROM golang:1.23-alpine AS builder
@@ -269,16 +271,42 @@ To build the image locally, you need Docker with BuildKit enabled.
 
 ## Automation
 
-The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, push, and sign process for all three image variants. It is triggered on:
+The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, test, sign, and publish process for all three image variants. It is triggered on:
 
 - A `push` to the `main` branch.
 - A daily schedule (`cron: "0 5 * * *"`) to ensure images are kept up-to-date with upstream packages.
 
-The workflow builds all three image variants in parallel and applies the following tagging strategy:
+The pipeline runs in stages so that no unscanned image is ever reachable through a consumable tag:
 
-- **Base images**: Tagged with `latest` and version tags (e.g., `v2025.06.13`)
-- **glibc images**: Tagged with `glibc` and version-glibc tags (e.g., `v2025.06.13-glibc`)
-- **Debug images**: Tagged with `debug` and version-debug tags (e.g., `v2025.06.13-debug`)
+1. **build** - builds each variant with `apko` (constrained by the committed lockfiles) and publishes it under an ephemeral run-scoped tag (`build-<run_id>-<variant>`).
+2. **test** - runs the Go smoke tests on both architectures and a Trivy vulnerability scan against the freshly built digests. Any failure stops the pipeline here.
+3. **promote** - signs each digest with Cosign (keyless), attaches the SPDX SBOM as a signed attestation and SLSA build provenance, then moves the floating tags:
+   - **Base images**: `latest` and version tags (e.g., `v2025.06.13`)
+   - **glibc images**: `glibc` and version-glibc tags (e.g., `v2025.06.13-glibc`)
+   - **Debug images**: `debug` and version-debug tags (e.g., `v2025.06.13-debug`)
+4. **release** - creates a GitHub release with version tags when package contents changed.
+
+The [`.github/workflows/update-locks.yml`](./.github/workflows/update-locks.yml) workflow regenerates the `apko lock` files daily and opens a PR when Wolfi package versions have moved, keeping builds reproducible while still tracking upstream security patches.
+
+### Verifying Images
+
+All artifacts are verifiable from the registry, without trusting this README:
+
+```bash
+IMAGE=ghcr.io/taihen/base-image:latest
+IDENTITY=https://github.com/taihen/base-image/.github/workflows/build.yml@refs/heads/main
+ISSUER=https://token.actions.githubusercontent.com
+
+# Signature
+cosign verify "$IMAGE" --certificate-identity="$IDENTITY" --certificate-oidc-issuer="$ISSUER"
+
+# SBOM attestation (SPDX)
+cosign verify-attestation "$IMAGE" --type spdxjson \
+  --certificate-identity="$IDENTITY" --certificate-oidc-issuer="$ISSUER"
+
+# SLSA build provenance
+gh attestation verify "oci://$IMAGE" --repo taihen/base-image
+```
 
 ## Automatic Release System
 
@@ -333,7 +361,7 @@ Before creating a release, the workflow runs comprehensive tests to ensure all t
 ### Test Suite
 
 1. **Go Application Test**: Builds and runs a hello world Go application on all three image variants
-   - Verifies glibc/musl compatibility as appropriate
+   - Verifies glibc/static-binary compatibility as appropriate
    - Tests both `linux/amd64` and `linux/arm64` architectures
    - Confirms correct user execution (UID 65532 for production variants, UID 0 for debug)
    - Validates environment variable handling
