@@ -1,0 +1,72 @@
+name: Update Lockfiles
+
+# Regenerates the apko lockfiles daily (ahead of the 05:00 build) and opens
+# a PR when Wolfi package versions have moved. Builds always use the
+# committed lockfiles, so images stay reproducible; freshness arrives
+# through these PRs.
+#
+# Note: PRs opened with GITHUB_TOKEN do not trigger the PR validation
+# workflow. Re-run checks manually (close/reopen the PR or push to its
+# branch), or switch this workflow to a PAT/GitHub App token if unattended
+# merges are wanted.
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-locks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install apko
+        env:
+          APKO_VERSION: 1.2.25
+          APKO_SHA256: b5a480cfb32458f55d1f1513a902f6cdf7dc284b9e6fe9840abdbcebc3908d47
+        run: |
+          set -e
+          tmp=$(mktemp -d)
+          apko_archive="apko_${APKO_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "https://github.com/chainguard-dev/apko/releases/download/v${APKO_VERSION}/${apko_archive}" \
+            -o "$tmp/${apko_archive}"
+          echo "${APKO_SHA256}  $tmp/${apko_archive}" | sha256sum -c -
+          tar -xzf "$tmp/${apko_archive}" -C "$tmp"
+          sudo install -m 0755 "$tmp/apko_${APKO_VERSION}_linux_amd64/apko" /usr/local/bin/apko
+          rm -rf "$tmp"
+          apko version
+      - name: Regenerate lockfiles
+        run: |
+          set -e
+          for cfg in base glibc debug; do
+            apko lock "$cfg.yaml" --output "$cfg.lock.json"
+          done
+      - name: Open PR if lockfiles changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          if git diff --quiet -- '*.lock.json'; then
+            echo "Lockfiles unchanged, nothing to do."
+            exit 0
+          fi
+          branch="chore/lock-bump-$(date +%Y%m%d)"
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null 2>&1; then
+            echo "Branch $branch already exists, skipping."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add -- '*.lock.json'
+          git commit -m "chore(deps): bump apko lockfiles $(date +%Y-%m-%d)"
+          git push origin "$branch"
+          gh pr create \
+            --title "chore(deps): bump apko lockfiles $(date +%Y-%m-%d)" \
+            --body "Automated Wolfi package refresh via \`apko lock\`. Diff shows exact package version changes." \
+            --label dependencies
