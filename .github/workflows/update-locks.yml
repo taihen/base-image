@@ -68,5 +68,9 @@ jobs:
           git push origin "$branch"
           gh pr create \
             --title "chore(deps): bump apko lockfiles $(date +%Y-%m-%d)" \
-            --body "Automated Wolfi package refresh via \`apko lock\`. Diff shows exact package version changes." \
-            --label dependencies
+            --body "Automated Wolfi package refresh via \`apko lock\`. Diff shows exact package version changes."
+          # Labelling is cosmetic, so keep it off the critical path. A missing
+          # label used to fail the step after the branch was already pushed,
+          # leaving an orphan branch and no PR.
+          gh pr edit "$branch" --add-label dependencies \
+            || echo "WARNING: could not add 'dependencies' label; PR was still created."
