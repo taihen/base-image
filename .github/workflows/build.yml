@@ -107,9 +107,19 @@ jobs:
           }
 
           ARTIFACTS='{"artifacts":[]}'
+          # gh writes the error body to stdout on failure, so a 404 would
+          # otherwise be captured as the run id. `// empty` covers a workflow
+          # that exists with no successful runs yet, and the numeric guard
+          # covers anything else that leaks through.
           LAST_RUN=$(api \
             "/repos/$REPO/actions/workflows/$HISTORY_WORKFLOW/runs?status=success&per_page=1" \
             --jq '.workflow_runs[0].id // empty' 2>/dev/null || true)
+          case "$LAST_RUN" in
+            '' | *[!0-9]*)
+              echo "No usable previous run id (got: '${LAST_RUN}')"
+              LAST_RUN=""
+              ;;
+          esac
           if [ -n "$LAST_RUN" ]; then
             echo "Found last successful run: $LAST_RUN"
             ARTIFACTS=$(api "/repos/$REPO/actions/runs/$LAST_RUN/artifacts" 2>/dev/null \
