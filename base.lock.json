@@ -48,22 +48,22 @@
       },
       {
         "name": "ca-certificates-bundle",
-        "url": "https://packages.wolfi.dev/os/x86_64/ca-certificates-bundle-20260413-r0.apk",
-        "version": "20260413-r0",
+        "url": "https://packages.wolfi.dev/os/x86_64/ca-certificates-bundle-20260413-r1.apk",
+        "version": "20260413-r1",
         "architecture": "x86_64",
         "signature": {
           "range": "",
           "checksum": ""
         },
         "control": {
-          "range": "bytes=0-7872",
-          "checksum": "sha1-KyCdEL20IKE+B7DKW97GLXu2QLM="
+          "range": "bytes=0-8322",
+          "checksum": "sha1-u3xyVyewNfx7ZzTDikWdOlY9Tt8="
         },
         "data": {
-          "range": "bytes=7873-137518",
-          "checksum": "sha256-foyxNKCWc3UQM3Kq5on+Gt/2d+HlzCUl+1lqiaviWE8="
+          "range": "bytes=8323-137882",
+          "checksum": "sha256-FfsoSAq28t7qTE1H+hPbrozu3BjgGiACoDMkS37a2G0="
         },
-        "checksum": "Q1KyCdEL20IKE+B7DKW97GLXu2QLM="
+        "checksum": "Q1u3xyVyewNfx7ZzTDikWdOlY9Tt8="
       },
       {
         "name": "tzdata",
@@ -105,22 +105,22 @@
       },
       {
         "name": "ca-certificates-bundle",
-        "url": "https://packages.wolfi.dev/os/aarch64/ca-certificates-bundle-20260413-r0.apk",
-        "version": "20260413-r0",
+        "url": "https://packages.wolfi.dev/os/aarch64/ca-certificates-bundle-20260413-r1.apk",
+        "version": "20260413-r1",
         "architecture": "aarch64",
         "signature": {
           "range": "",
           "checksum": ""
         },
         "control": {
-          "range": "bytes=0-7907",
-          "checksum": "sha1-YLGEH8o/PNCjR8sxoxh//AGpOgQ="
+          "range": "bytes=0-8359",
+          "checksum": "sha1-30PaFA+RvZD2YLXY2QbAzVN5nnY="
         },
         "data": {
-          "range": "bytes=7908-137552",
-          "checksum": "sha256-1NKuKrCJxco8aTxdlzNkEjM/4HyDXmO6sGOfSTiu8aE="
+          "range": "bytes=8360-137919",
+          "checksum": "sha256-SgPmQtM21VNroXR9zooX8TGHE4flXvMfOlliGiBr7f4="
         },
-        "checksum": "Q1YLGEH8o/PNCjR8sxoxh//AGpOgQ="
+        "checksum": "Q130PaFA+RvZD2YLXY2QbAzVN5nnY="
       },
       {
         "name": "tzdata",
