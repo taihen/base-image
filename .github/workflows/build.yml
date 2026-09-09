@@ -37,8 +37,7 @@ jobs:
           # When called by another workflow, use the ref it provides.
           # Otherwise, use the default ref for the event (e.g., main branch).
           ref: ${{ inputs.ref || github.ref }}
-      - name: Get previous digest and SBOM from last successful run
-        id: previous
+      - name: Get previous SBOM from last successful run
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -53,7 +52,7 @@ jobs:
           # pipeline: the build died here before apko ever ran, so no run
           # could succeed, so the "last successful run" pointer never
           # advanced past the run whose artifacts had already expired.
-          echo "Fetching previous digests and SBOMs from last successful workflow run..."
+          echo "Fetching the previous SBOM from the last successful workflow run..."
 
           api() {
             gh api \
@@ -84,25 +83,6 @@ jobs:
             fi
           }
 
-          # Publishes one variant's previous digest as a step output, empty
-          # when no baseline is available.
-          emit_previous_digest() {
-            local variant="$1"
-            local zip="previous-$variant-digest.zip"
-            local digest=""
-            rm -f digest.txt
-            if fetch_artifact "previous-$variant-digest" "$zip" \
-              && unzip -q -o "$zip" \
-              && [ -s digest.txt ]; then
-              digest=$(cat digest.txt)
-              echo "Previous $variant digest found: $digest"
-            else
-              echo "No previous $variant digest available"
-            fi
-            echo "$variant-digest=$digest" >> "$GITHUB_OUTPUT"
-            rm -f "$zip" digest.txt
-          }
-
           ARTIFACTS='{"artifacts":[]}'
           LAST_RUN=$(api \
             "/repos/$REPO/actions/workflows/build.yml/runs?status=success&per_page=1" \
@@ -114,10 +94,6 @@ jobs:
           else
             echo "No previous successful workflow run found"
           fi
-
-          for variant in base glibc debug; do
-            emit_previous_digest "$variant"
-          done
 
           if fetch_artifact previous-sbom sbom-artifact.zip; then
             mkdir -p previous-sbom
@@ -225,7 +201,7 @@ jobs:
       - name: Compare SBOMs
         id: sbom-compare
         run: python3 scripts/compare_sboms.py
-      - name: Compare digests and SBOMs
+      - name: Determine whether packages changed
         id: compare
         run: |
           SBOM_CHANGES="${{ steps.sbom-compare.outputs.sbom-changes }}"
@@ -237,35 +213,6 @@ jobs:
             echo "has-changes=false" >> $GITHUB_OUTPUT
             echo "No changes detected in packages"
           fi
-      - name: Save current digests
-        run: |
-          mkdir -p current-base-digest current-glibc-digest current-debug-digest
-          echo "${{ steps.extract-digest.outputs.base-digest }}" > current-base-digest/digest.txt
-          echo "${{ steps.extract-digest.outputs.glibc-digest }}" > current-glibc-digest/digest.txt
-          echo "${{ steps.extract-digest.outputs.debug-digest }}" > current-debug-digest/digest.txt
-          # Clean up temporary files
-          rm -f base-digest.txt glibc-digest.txt debug-digest.txt
-      - name: Upload current base digest artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: previous-base-digest
-          path: current-base-digest/digest.txt
-          retention-days: 30
-          overwrite: true
-      - name: Upload current glibc digest artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: previous-glibc-digest
-          path: current-glibc-digest/digest.txt
-          retention-days: 30
-          overwrite: true
-      - name: Upload current debug digest artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: previous-debug-digest
-          path: current-debug-digest/digest.txt
-          retention-days: 30
-          overwrite: true
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
