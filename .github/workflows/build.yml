@@ -37,138 +37,73 @@ jobs:
           # When called by another workflow, use the ref it provides.
           # Otherwise, use the default ref for the event (e.g., main branch).
           ref: ${{ inputs.ref || github.ref }}
-      - name: Get previous digest and SBOM from last successful run
-        id: previous
+      - name: Get previous SBOM from last successful run
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          # Try to get the digest and SBOM from the most recent successful workflow run
-          echo "Fetching previous digests and SBOMs from last successful workflow run..."
+          # Best-effort freshness baseline. Every lookup here is allowed to
+          # fail: with no baseline the SBOM comparison reports "changed",
+          # the same conservative path the very first build takes.
+          #
+          # This step must never fail the job. Artifact metadata outlives the
+          # artifact itself, so a download returns HTTP 410 Gone long after
+          # the ID lookup succeeds. Treating that as fatal deadlocked the
+          # pipeline: the build died here before apko ever ran, so no run
+          # could succeed, so the "last successful run" pointer never
+          # advanced past the run whose artifacts had already expired.
+          echo "Fetching the previous SBOM from the last successful workflow run..."
 
-          # Get the most recent successful workflow run
-          LAST_RUN=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/actions/workflows/build.yml/runs?status=success&per_page=1" \
-            --jq '.workflow_runs[0].id' || echo "")
-          if [ -n "$LAST_RUN" ]; then
-            echo "Found last successful run: $LAST_RUN"
-
-            # List artifacts from that run
-            ARTIFACTS=$(gh api \
+          api() {
+            gh api \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/${{ github.repository }}/actions/runs/$LAST_RUN/artifacts")
+              "$@"
+          }
 
-            # Get base digest artifact
-            BASE_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-base-digest") | .id' || echo "")
-            if [ -n "$BASE_DIGEST_ARTIFACT_ID" ]; then
-              echo "Found previous base digest artifact: $BASE_DIGEST_ARTIFACT_ID"
-
-              # Download the digest artifact
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$BASE_DIGEST_ARTIFACT_ID/zip" \
-                > base-digest-artifact.zip
-
-              # Extract and read the digest
-              unzip -q base-digest-artifact.zip
-              if [ -f digest.txt ]; then
-                BASE_DIGEST=$(cat digest.txt)
-                echo "base-digest=$BASE_DIGEST" >> $GITHUB_OUTPUT
-                echo "Previous base digest found: $BASE_DIGEST"
-                rm -f base-digest-artifact.zip digest.txt
-              else
-                echo "No digest.txt found in base artifact"
-                echo "base-digest=" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "No previous base digest artifact found"
-              echo "base-digest=" >> $GITHUB_OUTPUT
+          # Downloads artifact "$1" to "$2". Returns non-zero when it is
+          # absent, already expired, or the download itself fails.
+          fetch_artifact() {
+            local artifact_name="$1"
+            local out="$2"
+            local artifact_id
+            artifact_id=$(printf '%s' "$ARTIFACTS" | jq -r --arg n "$artifact_name" \
+              'first(.artifacts[] | select(.name == $n and .expired == false) | .id) // empty')
+            if [ -z "$artifact_id" ]; then
+              echo "No usable $artifact_name artifact (absent or expired)"
+              return 1
             fi
-
-            # Get glibc digest artifact
-            GLIBC_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-glibc-digest") | .id' || echo "")
-            if [ -n "$GLIBC_DIGEST_ARTIFACT_ID" ]; then
-              echo "Found previous glibc digest artifact: $GLIBC_DIGEST_ARTIFACT_ID"
-
-              # Download the digest artifact
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$GLIBC_DIGEST_ARTIFACT_ID/zip" \
-                > glibc-digest-artifact.zip
-
-              # Extract and read the digest
-              unzip -q glibc-digest-artifact.zip
-              if [ -f digest.txt ]; then
-                GLIBC_DIGEST=$(cat digest.txt)
-                echo "glibc-digest=$GLIBC_DIGEST" >> $GITHUB_OUTPUT
-                echo "Previous glibc digest found: $GLIBC_DIGEST"
-                rm -f glibc-digest-artifact.zip digest.txt
-              else
-                echo "No digest.txt found in glibc artifact"
-                echo "glibc-digest=" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "No previous glibc digest artifact found"
-              echo "glibc-digest=" >> $GITHUB_OUTPUT
+            echo "Found $artifact_name artifact: $artifact_id"
+            if ! api "/repos/$REPO/actions/artifacts/$artifact_id/zip" \
+              > "$out" 2> "$RUNNER_TEMP/artifact-error"; then
+              echo "WARNING: could not download $artifact_name artifact:" \
+                "$(cat "$RUNNER_TEMP/artifact-error")"
+              rm -f "$out"
+              return 1
             fi
+          }
 
-            # Get debug digest artifact
-            DEBUG_DIGEST_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-debug-digest") | .id' || echo "")
-            if [ -n "$DEBUG_DIGEST_ARTIFACT_ID" ]; then
-              echo "Found previous debug digest artifact: $DEBUG_DIGEST_ARTIFACT_ID"
-
-              # Download the digest artifact
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$DEBUG_DIGEST_ARTIFACT_ID/zip" \
-                > debug-digest-artifact.zip
-
-              # Extract and read the digest
-              unzip -q debug-digest-artifact.zip
-              if [ -f digest.txt ]; then
-                DEBUG_DIGEST=$(cat digest.txt)
-                echo "debug-digest=$DEBUG_DIGEST" >> $GITHUB_OUTPUT
-                echo "Previous debug digest found: $DEBUG_DIGEST"
-                rm -f debug-digest-artifact.zip digest.txt
-              else
-                echo "No digest.txt found in debug artifact"
-                echo "debug-digest=" >> $GITHUB_OUTPUT
-              fi
-            else
-              echo "No previous debug digest artifact found"
-              echo "debug-digest=" >> $GITHUB_OUTPUT
-            fi
-
-            # Get SBOM artifacts
-            SBOM_ARTIFACT_ID=$(echo "$ARTIFACTS" | jq -r '.artifacts[] | select(.name == "previous-sbom") | .id' || echo "")
-            if [ -n "$SBOM_ARTIFACT_ID" ]; then
-              echo "Found previous SBOM artifact: $SBOM_ARTIFACT_ID"
-
-              # Download the SBOM artifact
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/repos/${{ github.repository }}/actions/artifacts/$SBOM_ARTIFACT_ID/zip" \
-                > sbom-artifact.zip
-
-              # Extract SBOM
-              mkdir -p previous-sbom
-              unzip -q sbom-artifact.zip -d previous-sbom/
-              echo "Previous SBOM downloaded successfully"
-              rm -f sbom-artifact.zip
-            else
-              echo "No previous SBOM artifact found"
-            fi
+          ARTIFACTS='{"artifacts":[]}'
+          LAST_RUN=$(api \
+            "/repos/$REPO/actions/workflows/build.yml/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty' 2>/dev/null || true)
+          if [ -n "$LAST_RUN" ]; then
+            echo "Found last successful run: $LAST_RUN"
+            ARTIFACTS=$(api "/repos/$REPO/actions/runs/$LAST_RUN/artifacts" 2>/dev/null \
+              || echo '{"artifacts":[]}')
           else
             echo "No previous successful workflow run found"
-            echo "base-digest=" >> $GITHUB_OUTPUT
-            echo "glibc-digest=" >> $GITHUB_OUTPUT
-            echo "debug-digest=" >> $GITHUB_OUTPUT
+          fi
+
+          if fetch_artifact previous-sbom sbom-artifact.zip; then
+            mkdir -p previous-sbom
+            if unzip -q -o sbom-artifact.zip -d previous-sbom/; then
+              echo "Previous SBOM downloaded successfully"
+            else
+              echo "WARNING: previous SBOM archive could not be extracted"
+              rm -rf previous-sbom
+            fi
+            rm -f sbom-artifact.zip
           fi
       - name: Install apko
         env:
@@ -266,7 +201,7 @@ jobs:
       - name: Compare SBOMs
         id: sbom-compare
         run: python3 scripts/compare_sboms.py
-      - name: Compare digests and SBOMs
+      - name: Determine whether packages changed
         id: compare
         run: |
           SBOM_CHANGES="${{ steps.sbom-compare.outputs.sbom-changes }}"
@@ -278,35 +213,6 @@ jobs:
             echo "has-changes=false" >> $GITHUB_OUTPUT
             echo "No changes detected in packages"
           fi
-      - name: Save current digests
-        run: |
-          mkdir -p current-base-digest current-glibc-digest current-debug-digest
-          echo "${{ steps.extract-digest.outputs.base-digest }}" > current-base-digest/digest.txt
-          echo "${{ steps.extract-digest.outputs.glibc-digest }}" > current-glibc-digest/digest.txt
-          echo "${{ steps.extract-digest.outputs.debug-digest }}" > current-debug-digest/digest.txt
-          # Clean up temporary files
-          rm -f base-digest.txt glibc-digest.txt debug-digest.txt
-      - name: Upload current base digest artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: previous-base-digest
-          path: current-base-digest/digest.txt
-          retention-days: 7
-          overwrite: true
-      - name: Upload current glibc digest artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: previous-glibc-digest
-          path: current-glibc-digest/digest.txt
-          retention-days: 7
-          overwrite: true
-      - name: Upload current debug digest artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: previous-debug-digest
-          path: current-debug-digest/digest.txt
-          retention-days: 7
-          overwrite: true
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -317,7 +223,7 @@ jobs:
         with:
           name: previous-sbom
           path: sbom-output/
-          retention-days: 7
+          retention-days: 30
           overwrite: true
   test:
     needs: build
