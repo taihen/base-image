@@ -111,19 +111,19 @@ jobs:
           echo "glibc-sha=${GLIBC_DIGEST##*@}" >> $GITHUB_OUTPUT
           echo "debug-sha=${DEBUG_DIGEST##*@}" >> $GITHUB_OUTPUT
       - name: Attest build provenance (base)
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digests.outputs.base-sha }}
           push-to-registry: true
       - name: Attest build provenance (glibc)
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digests.outputs.glibc-sha }}
           push-to-registry: true
       - name: Attest build provenance (debug)
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.digests.outputs.debug-sha }}
