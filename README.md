@@ -271,12 +271,14 @@ To build the image locally, you need Docker with BuildKit enabled.
 
 ## Automation
 
-The [`.github/workflows/build.yml`](./.github/workflows/build.yml) workflow handles the entire build, test, sign, and publish process for all three image variants. It is triggered on:
+The [`.github/workflows/publish.yml`](./.github/workflows/publish.yml) workflow handles the entire build, test, sign, and publish process for all three image variants. It calls the reusable [`.github/workflows/build.yml`](./.github/workflows/build.yml) for the build and test stages, then signs and releases. It is triggered on:
 
 - A `push` to the `main` branch.
 - A daily schedule (`cron: "0 5 * * *"`) to ensure images are kept up-to-date with upstream packages.
 
 The pipeline runs in stages so that no unscanned image is ever reachable through a consumable tag:
+
+The same `build` and `test` stages also run on every pull request through [`.github/workflows/pr-validation.yml`](./.github/workflows/pr-validation.yml), which calls the same reusable workflow. Signing, tag promotion and releases are deliberately kept out of `build.yml` so that pull request runs are never granted signing permissions.
 
 1. **build** - builds each variant with `apko` (constrained by the committed lockfiles) and publishes it under an ephemeral run-scoped tag (`build-<run_id>-<variant>`).
 2. **test** - runs the Go smoke tests on both architectures and a Trivy vulnerability scan against the freshly built digests. Any failure stops the pipeline here.
@@ -294,7 +296,7 @@ All artifacts are verifiable from the registry, without trusting this README:
 
 ```bash
 IMAGE=ghcr.io/taihen/base-image:latest
-IDENTITY=https://github.com/taihen/base-image/.github/workflows/build.yml@refs/heads/main
+IDENTITY=https://github.com/taihen/base-image/.github/workflows/publish.yml@refs/heads/main
 ISSUER=https://token.actions.githubusercontent.com
 
 # Signature

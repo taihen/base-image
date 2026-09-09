@@ -5,14 +5,19 @@ on:
     branches: [ main ]
     types: [ opened, synchronize, reopened, ready_for_review ]
 
-permissions:
-  contents: write
-  pull-requests: write
+# Permissions are granted per job. A called reusable workflow cannot request
+# more than the calling job holds, and exceeding that fails the run at startup
+# before any `if:` condition is evaluated. build.yml therefore contains only the
+# build and test jobs, which need nothing beyond packages: write.
+permissions: {}
 
 jobs:
   validate:
     # This job runs for all PRs to main
     uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      packages: write
     with:
       ref: ${{ github.event.pull_request.head.sha }}
     secrets: inherit
@@ -22,6 +27,9 @@ jobs:
     # This job ONLY runs for Dependabot PRs
     if: github.actor == 'dependabot[bot]' && !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Approve and enable automerge for Dependabot PR
         uses: fastify/github-action-merge-dependabot@73ec4cbb5e56df5591eae286972d5b2201ffe90f # v3.15.0
