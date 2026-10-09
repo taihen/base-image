@@ -371,22 +371,22 @@
       },
       {
         "name": "busybox",
-        "url": "https://packages.wolfi.dev/os/x86_64/busybox-1.38.0-r2.apk",
-        "version": "1.38.0-r2",
+        "url": "https://packages.wolfi.dev/os/x86_64/busybox-1.38.0-r3.apk",
+        "version": "1.38.0-r3",
         "architecture": "x86_64",
         "signature": {
           "range": "",
           "checksum": ""
         },
         "control": {
-          "range": "bytes=0-11060",
-          "checksum": "sha1-PmXIS86GRqfGh1s/gJlGy3TuNmE="
+          "range": "bytes=0-11163",
+          "checksum": "sha1-nJ0RNPYKE/6p9+1WgdqC1lA0JnM="
         },
         "data": {
-          "range": "bytes=11061-435900",
-          "checksum": "sha256-eIOLVoUCSsFpedRlmEH+1fVwnHLQGA3I5S+PYSuXUV8="
+          "range": "bytes=11164-436004",
+          "checksum": "sha256-eiPqq0IhMo9ZgqE8KLWB71tg1haCYNAj+ZVUX+vEt+U="
         },
-        "checksum": "Q1PmXIS86GRqfGh1s/gJlGy3TuNmE="
+        "checksum": "Q1nJ0RNPYKE/6p9+1WgdqC1lA0JnM="
       },
       {
         "name": "wolfi-base",
@@ -751,22 +751,22 @@
       },
       {
         "name": "busybox",
-        "url": "https://packages.wolfi.dev/os/aarch64/busybox-1.38.0-r2.apk",
-        "version": "1.38.0-r2",
+        "url": "https://packages.wolfi.dev/os/aarch64/busybox-1.38.0-r3.apk",
+        "version": "1.38.0-r3",
         "architecture": "aarch64",
         "signature": {
           "range": "",
           "checksum": ""
         },
         "control": {
-          "range": "bytes=0-11100",
-          "checksum": "sha1-9vDfxgLQG5vl10qMzsN4no556cM="
+          "range": "bytes=0-11199",
+          "checksum": "sha1-EJpocCHP/Q38Ix79OXIZwyt7hDA="
         },
         "data": {
-          "range": "bytes=11101-437792",
-          "checksum": "sha256-zuVUtbEZ0ieGclXwrt66cWC7uFs66J1SC7njQs4pys8="
+          "range": "bytes=11200-437884",
+          "checksum": "sha256-gC2KvYzZ+z7nc0ms1VS1gnrHvxjy3CYAr63Wobn7zo8="
         },
-        "checksum": "Q19vDfxgLQG5vl10qMzsN4no556cM="
+        "checksum": "Q1EJpocCHP/Q38Ix79OXIZwyt7hDA="
       },
       {
         "name": "wolfi-base",
