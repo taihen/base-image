@@ -1,30 +1,55 @@
 name: Update Lockfiles
 
-# Regenerates the apko lockfiles daily (ahead of the 05:00 build) and opens
-# a PR when Wolfi package versions have moved. Builds always use the
-# committed lockfiles, so images stay reproducible; freshness arrives
-# through these PRs.
+# Keeps the apko lockfiles fresh ahead of the 05:00 publish run.
 #
-# Note: PRs opened with GITHUB_TOKEN do not trigger the PR validation
-# workflow. Re-run checks manually (close/reopen the PR or push to its
-# branch), or switch this workflow to a PAT/GitHub App token if unattended
-# merges are wanted.
+# The previous shape opened a fresh dated branch + PR on every run and left them
+# there: 63 stale branches and 18 open PRs, none of which could ever go green.
+# Two structural reasons:
+#
+#   1. A PR opened with GITHUB_TOKEN does not trigger the pull_request workflow,
+#      so `PR Validation` never runs on it and its checks stay empty forever.
+#   2. Nothing merged them, so each day simply added another one.
+#
+# This version keeps exactly one PR alive and gates it on a real build:
+#
+#   refresh   regenerates the lockfiles on a fixed branch, force-pushing it so a
+#             newer regeneration supersedes the old diff instead of stacking
+#   validate  calls build.yml directly (workflow_call is not subject to the
+#             GITHUB_TOKEN trigger suppression), so the PR carries real evidence
+#   merge     squash-merges only when that build passed
+#
+# The merge lands on main around 04:15; the scheduled publish at 05:00 picks up
+# the new lockfiles. If validation fails, the PR stays open and red, and the
+# next run force-pushes over it — still exactly one open PR.
+#
+# Set the repository variable LOCK_AUTOMERGE=false to keep the PR but leave the
+# merge to a human.
 
 on:
   schedule:
     - cron: '0 4 * * *'
   workflow_dispatch: {}
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
+
+concurrency:
+  group: update-locks
+  cancel-in-progress: false
 
 jobs:
-  update-locks:
+  refresh:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      changed: ${{ steps.publish.outputs.changed }}
+      branch: ${{ steps.vars.outputs.branch }}
+      ref: ${{ steps.publish.outputs.ref }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Install apko
         env:
           APKO_VERSION: 1.2.25
@@ -40,37 +65,85 @@ jobs:
           sudo install -m 0755 "$tmp/apko_${APKO_VERSION}_linux_amd64/apko" /usr/local/bin/apko
           rm -rf "$tmp"
           apko version
+
       - name: Regenerate lockfiles
         run: |
           set -e
           for cfg in base glibc debug; do
             apko lock "$cfg.yaml" --output "$cfg.lock.json"
           done
-      - name: Open PR if lockfiles changed
+
+      - name: Resolve branch name
+        id: vars
+        run: echo "branch=chore/lock-refresh" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and open or update the PR
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.vars.outputs.branch }}
         run: |
           set -e
           if git diff --quiet -- '*.lock.json'; then
             echo "Lockfiles unchanged, nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          branch="chore/lock-bump-$(date +%Y%m%d)"
-          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null 2>&1; then
-            echo "Branch $branch already exists, skipping."
-            exit 0
-          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "$branch"
+          git switch -c "$BRANCH"
           git add -- '*.lock.json'
-          git commit -m "chore(deps): bump apko lockfiles $(date +%Y-%m-%d)"
-          git push origin "$branch"
+          git commit -m "chore(deps): refresh apko lockfiles $(date +%Y-%m-%d)"
+
+          # Force: the branch is a rolling slot, so today's regeneration replaces
+          # whatever an earlier run left unmerged.
+          git push --force origin "$BRANCH"
+
+          echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "Rolling PR already open, updated in place."
+            exit 0
+          fi
+
           gh pr create \
-            --title "chore(deps): bump apko lockfiles $(date +%Y-%m-%d)" \
-            --body "Automated Wolfi package refresh via \`apko lock\`. Diff shows exact package version changes."
-          # Labelling is cosmetic, so keep it off the critical path. A missing
-          # label used to fail the step after the branch was already pushed,
+            --head "$BRANCH" \
+            --title "chore(deps): refresh apko lockfiles" \
+            --body "Automated Wolfi package refresh via \`apko lock\`. The diff shows the exact package version changes.
+
+          The \`validate\` job of the Update Lockfiles workflow builds this branch, so the checks on this PR are evidence for the bump. The branch is force-pushed by each run, so this PR always carries the latest regeneration."
+
+          # Cosmetic, and it used to fail the step after the branch was pushed,
           # leaving an orphan branch and no PR.
-          gh pr edit "$branch" --add-label dependencies \
+          gh pr edit "$BRANCH" --add-label dependencies \
             || echo "WARNING: could not add 'dependencies' label; PR was still created."
+
+  validate:
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'true'
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      ref: ${{ needs.refresh.outputs.ref }}
+    secrets: inherit
+
+  merge:
+    needs: [refresh, validate]
+    if: needs.refresh.outputs.changed == 'true' && vars.LOCK_AUTOMERGE != 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Squash-merge the validated lockfile refresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ needs.refresh.outputs.branch }}
+        run: |
+          set -e
+          gh pr merge "$BRANCH" --squash --delete-branch
